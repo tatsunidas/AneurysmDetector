@@ -16,4 +16,11 @@
 		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 	</properties>
 
+	<dependencies>
+		<dependency>
+			<groupId>com.vis.graphy</groupId>
+			<artifactId>graphy</artifactId>
+			<version>0.0.17</version>
+		</dependency>
+	</dependencies>
 </project>

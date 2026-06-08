@@ -2,56 +2,45 @@ package com.vis.aneurysmdetector.preprocessing;
 
 import com.vis.aneurysmdetector.core.Image3D;
 import ij.ImagePlus;
-import ij.ImageStack;
-import ij.process.ImageProcessor;
+import sc.fiji.skeletonize3D.Skeletonize3D_;
 
 /**
  * 2値化された血管マスクから中心線を抽出（細線化）するクラス。
- * 3D空間のトポロジー（連結性）を保持したまま1ボクセル幅まで収縮させます。
+ * Fijiの Skeletonize3D_ プラグインを利用して、トポロジーを維持した3D細線化を実行します。
  */
 public class Skeletonizer {
 
     public Skeletonizer() {
-        // 必要に応じて細線化のパラメータ（枝刈りの強度など）を初期化
+        // 必要に応じて初期化処理を記述します
     }
 
     /**
      * バイナリマスク画像を細線化し、中心線のみが255、背景が0のImage3Dを返します。
-     * * @param binaryMask 2値化された血管マスク画像
+     * @param binaryMask 2値化された血管マスク画像
      * @return 細線化（スケルトン化）された3D画像
      */
     public Image3D skeletonize(Image3D binaryMask) {
+        // 処理によって元の2値化マスクが上書き（破壊）されないよう、最初に複製します
         ImagePlus imp = binaryMask.getImagePlus().duplicate();
-        
-        // ====================================================================
-        // 【アルゴリズム実装のプレースホルダー】
-        // 実際にはここで3D Thinningアルゴリズム（Lee, Kashyap, Chuなど）を実行します。
-        // ImageJ環境であれば "Skeletonize3D_" プラグインを呼び出すのが一般的です。
-        // 
-        // 例: 
-        // Skeletonize3D_ skel = new Skeletonize3D_();
-        // skel.setup("", imp);
-        // skel.run(null);
-        // ====================================================================
-        
-        // 本モックでは、入力をそのまま返すか、代替の画像処理を呼び出します。
-        applyMock3DThinning(imp.getStack());
+        imp.setTitle(binaryMask.getImagePlus().getTitle() + "_Skeleton");
 
+        System.out.println("Executing Fiji Skeletonize3D_ on volume...");
+
+        // Skeletonize3D_ のインスタンス化
+        Skeletonize3D_ skel = new Skeletonize3D_();
+        
+        // setupメソッドで対象のImagePlusを渡し、内部の初期化を行います
+        // 第1引数のargは空文字で問題ありません
+        skel.setup("", imp);
+        
+        // runメソッドを実行して細線化処理を適用します
+        // 3Dプラグインのため、引数に渡した単一スライスのProcessorだけでなく、
+        // setupで渡したImagePlusのスタック全体が内部で処理・上書きされます
+        skel.run(imp.getProcessor());
+
+        System.out.println("Skeletonization completed.");
+
+        // 細線化が完了したImagePlusをImage3Dでラップして返す
         return new Image3D(imp);
-    }
-
-    /**
-     * 3D細線化処理の内部ロジック（プレースホルダー）。
-     * 実際の実装では、ボクセルの26近傍を評価して削除可能か判定する反復処理が入ります。
-     */
-    private void applyMock3DThinning(ImageStack stack) {
-        // FIXME: ここに実際の3D Thinningの反復ロジック（オイラー特性の不変性チェック等）を実装します。
-        // 現在はインターフェース定義のみ。
-        int width = stack.getWidth();
-        int height = stack.getHeight();
-        int depth = stack.getSize();
-        
-        // 処理の進行状態を示すログ等
-        // System.out.println("Executing 3D skeletonization...");
     }
 }

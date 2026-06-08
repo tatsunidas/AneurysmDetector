@@ -15,12 +15,50 @@
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 	</properties>
+	
+		<repositories>
+		<!-- pixelmed.jar -->
+		<repository>
+			<id>XNatLibs</id>
+			<name>XNatLibs Repository</name>
+			<url>https://nrgxnat.jfrog.io/artifactory/libs-release/</url>
+		</repository>
+		<!-- dcm4che -->
+		<repository>
+			<id>SciJava Public</id>
+			<name>SciJava Public Repository</name>
+			<url>https://maven.scijava.org/content/repositories/public/</url>
+		</repository>
+		<repository>
+			<id>ImageJ Releases Repository</id>
+			<name>ImageJ Releases Repository</name>
+			<url>https://maven.imagej.net/content/repositories/releases/</url>
+		</repository>
+		<repository>
+			<id>Dcm4Che</id>
+			<name>Dcm4Che Repository</name>
+			<url>https://www.dcm4che.org/maven2/</url>
+		</repository>
+		<!-- dcm4che imageio opencv -->
+		<repository>
+			<id>weasis-github-repo</id>
+			<name>Weasis GitHub Repository</name>
+			<url>https://raw.githubusercontent.com/nroduit/mvn-repo/master/</url>
+		</repository>
+	</repositories>
 
 	<dependencies>
 		<dependency>
 			<groupId>com.vis.graphy</groupId>
 			<artifactId>graphy</artifactId>
 			<version>0.0.17</version>
+		</dependency>
+		<!-- Source: https://mvnrepository.com/artifact/sc.fiji/Skeletonize3D_ -->
+		<dependency>
+		    <groupId>sc.fiji</groupId>
+		    <artifactId>Skeletonize3D_</artifactId>
+		    <version>2.1.1</version>
+		    <scope>compile</scope>
 		</dependency>
 	</dependencies>
 </project>

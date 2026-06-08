@@ -1,0 +1,18 @@
+# Mavenによって生成されるビルド成果物
+target/
+
+# コンパイル済みのアーカイブファイル
+*.jar
+*.war
+*.ear
+
+# お使いのIDE（統合開発環境）の個別設定ファイルなど（必要に応じて）
+# Eclipse
+.settings/
+.classpath
+.project
+# IntelliJ IDEA
+.idea/
+*.iml
+
+.claude/

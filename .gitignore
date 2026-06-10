@@ -15,5 +15,7 @@ target/
 .idea/
 *.iml
 
+.github/
+
 .claude/
 /test-mra/

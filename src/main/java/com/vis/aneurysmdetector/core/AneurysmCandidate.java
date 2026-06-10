@@ -1,72 +1,109 @@
 package com.vis.aneurysmdetector.core;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
- * 検出された動脈瘤の候補を保持するクラス。
- * アルゴリズム層からUI層への受け渡しに使用されます。
+ * 検出された動脈瘤の候補を表現するクラス。
+ * 危険度（最大膨らみ率など）や、3D空間上の位置情報を保持します。
  */
 public class AneurysmCandidate {
-    
-    public enum CandidateType {
-        BIFURCATION_ANEURYSM, // 分岐部瘤
-        SIDEWALL_ANEURYSM,    // 側壁瘤
-        SPURIOUS_BRANCH       // 俯瞰時の「短い枝」候補
-    }
 
-    private String candidateId;
-    private CandidateType type;
-    
-    // 候補が位置する中心座標
-    private Point3D centerPoint;
-    
-    // 関連する枝や分岐部（Typeに応じてどちらかがセットされる）
-    private BifurcationNode relatedNode;
-    private VesselBranch relatedBranch;
-    
-    // --- 幾何学的特徴量 ---
-    private double sphericity;
-    private double volumeToSurfaceRatio;
-    private double diameterChangeRate;
-    private double saliencyScore; // リスクの総合スコア（優先度付け用）
-    
-    // --- UIステータス ---
+    private Branch parentBranch;
+    private List<Point3D> involvedPoints;
+
+    // 候補領域内での最大（最悪）の数値
+    private double maxBulgeRatio;
+    private double maxShapeIndex;
+    private double peakGaussianCurvature;
+
+    // 最も膨らんでいる中心座標
+    private Point3D peakPoint;
+
+    // --- UI / 分類ステータス ---
     // ユーザーが「これは瘤ではない（偽陽性）」と判断した場合にtrueになる
     private boolean isCleared = false;
     
-    private String anatomicalLabel;
+ // --- 追加: 危険度スコア (0.0 ~ 100.0) ---
+    private double score = 0.0;
+    
+    // 動脈瘤の形態分類（外部Enum）
+    private CandidateType type;
 
-    public AneurysmCandidate(String candidateId, CandidateType type, Point3D centerPoint) {
-        this.candidateId = candidateId;
-        this.type = type;
-        this.centerPoint = centerPoint;
+    public AneurysmCandidate(Branch parentBranch) {
+        this.parentBranch = parentBranch;
+        this.involvedPoints = new ArrayList<>();
+        this.maxBulgeRatio = 0.0;
+        this.maxShapeIndex = 0.0;
+        this.peakGaussianCurvature = 0.0;
+        this.type = CandidateType.UNKNOWN; // 初期値としてUNKNOWNを設定
+    }
+
+    public void addPoint(Point3D p, double bulgeRatio, double shapeIndex, double gaussianCurvature) {
+        involvedPoints.add(p);
+
+        // 最大のBulgeRatioを更新した場合、そこを「ピーク座標」とする
+        if (bulgeRatio > this.maxBulgeRatio) {
+            this.maxBulgeRatio = bulgeRatio;
+            this.peakPoint = p;
+        }
+        if (shapeIndex > this.maxShapeIndex) {
+            this.maxShapeIndex = shapeIndex;
+        }
+        if (gaussianCurvature > this.peakGaussianCurvature) {
+            this.peakGaussianCurvature = gaussianCurvature;
+        }
     }
 
     // --- Getters & Setters ---
 
-    public String getCandidateId() { return candidateId; }
-    public CandidateType getType() { return type; }
-    public Point3D getCenterPoint() { return centerPoint; }
+    public Branch getParentBranch() {
+        return parentBranch;
+    }
 
-    public BifurcationNode getRelatedNode() { return relatedNode; }
-    public void setRelatedNode(BifurcationNode relatedNode) { this.relatedNode = relatedNode; }
+    public List<Point3D> getInvolvedPoints() {
+        return involvedPoints;
+    }
 
-    public VesselBranch getRelatedBranch() { return relatedBranch; }
-    public void setRelatedBranch(VesselBranch relatedBranch) { this.relatedBranch = relatedBranch; }
+    public double getMaxBulgeRatio() {
+        return maxBulgeRatio;
+    }
 
-    public double getSphericity() { return sphericity; }
-    public void setSphericity(double sphericity) { this.sphericity = sphericity; }
+    public double getMaxShapeIndex() {
+        return maxShapeIndex;
+    }
 
-    public double getVolumeToSurfaceRatio() { return volumeToSurfaceRatio; }
-    public void setVolumeToSurfaceRatio(double ratio) { this.volumeToSurfaceRatio = ratio; }
+    public double getPeakGaussianCurvature() {
+        return peakGaussianCurvature;
+    }
 
-    public double getDiameterChangeRate() { return diameterChangeRate; }
-    public void setDiameterChangeRate(double rate) { this.diameterChangeRate = rate; }
+    public Point3D getPeakPoint() {
+        return peakPoint;
+    }
 
-    public double getSaliencyScore() { return saliencyScore; }
-    public void setSaliencyScore(double score) { this.saliencyScore = score; }
+    public boolean isCleared() {
+        return isCleared;
+    }
 
-    public boolean isCleared() { return isCleared; }
-    public void setCleared(boolean cleared) { isCleared = cleared; }
+    public void setCleared(boolean cleared) {
+        isCleared = cleared;
+    }
 
-    public String getAnatomicalLabel() { return anatomicalLabel; }
-    public void setAnatomicalLabel(String label) { this.anatomicalLabel = label; }
+    public CandidateType getType() {
+        return type;
+    }
+
+    public void setType(CandidateType type) {
+        this.type = type;
+    }
+    
+ // --- Getter & Setter ---
+    public double getScore() { return score; }
+    public void setScore(double score) { this.score = score; }
+
+    @Override
+    public String toString() {
+        return String.format("Score: %5.1f | Aneurysm [%s] at (X:%d, Y:%d, Z:%d) | BulgeRatio: %5.2f | ShapeIndex: %.2f",
+                score, type, peakPoint.x, peakPoint.y, peakPoint.z, maxBulgeRatio, maxShapeIndex);
+    }
 }

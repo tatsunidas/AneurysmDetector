@@ -2,12 +2,10 @@ package com.vis.aneurysmdetector.ui;
 
 import com.vis.aneurysmdetector.core.AneurysmCandidate;
 import com.vis.aneurysmdetector.core.Image3D;
-import com.vis.aneurysmdetector.core.VesselBranch;
+import com.vis.aneurysmdetector.core.Branch;
 import com.vis.aneurysmdetector.core.VesselTree;
 import com.vis.aneurysmdetector.cpr.UnwrappedImage2D;
 import com.vis.aneurysmdetector.cpr.VesselUnwrapper;
-import com.vis.aneurysmdetector.detection.BifurcationAnalyzer;
-import com.vis.aneurysmdetector.detection.Pruner;
 
 import java.util.List;
 
@@ -53,8 +51,8 @@ public class WorkflowController {
      * 【Step 1】 ざっと脳血管を俯瞰する（短い枝のプルーニングと提示）
      */
     public void startStep1Overview() {
-        Pruner pruner = new Pruner(vesselMask);
-        this.spuriousBranches = pruner.pruneAndExtractCandidates(vesselTree);
+//        Pruner pruner = new Pruner(vesselMask);
+//        this.spuriousBranches = pruner.pruneAndExtractCandidates(vesselTree);
 
         // 3Dビュー全体を表示し、怪しい短い枝をハイライト表示する
         view3D.resetCamera();
@@ -68,13 +66,13 @@ public class WorkflowController {
      * 【Step 2】 分岐部に動脈瘤が無いか確認する
      */
     public void startStep2Bifurcations() {
-        BifurcationAnalyzer analyzer = new BifurcationAnalyzer(vesselMask);
-        this.bifurcationAneurysms = analyzer.analyze(vesselTree);
-
-        // スコアが最も高い最初の分岐部候補にフォーカスを当てる
-        if (!bifurcationAneurysms.isEmpty()) {
-            focusOnCandidate(bifurcationAneurysms.get(0));
-        }
+//        BifurcationAnalyzer analyzer = new BifurcationAnalyzer(vesselMask);
+//        this.bifurcationAneurysms = analyzer.analyze(vesselTree);
+//
+//        // スコアが最も高い最初の分岐部候補にフォーカスを当てる
+//        if (!bifurcationAneurysms.isEmpty()) {
+//            focusOnCandidate(bifurcationAneurysms.get(0));
+//        }
         
         // TODO: UIパネルに bifurcationAneurysms のリストを表示し、Clearチェックボックスを生成
     }
@@ -86,17 +84,17 @@ public class WorkflowController {
         VesselUnwrapper unwrapper = new VesselUnwrapper(36, 15.0);
         
         // 主要な枝（プルーニングされなかった正常な長さの枝）に対して展開図を作成
-        for (VesselBranch branch : vesselTree.getBranches()) {
-            if (!branch.isPruned()) {
-                UnwrappedImage2D unwrapped2D = unwrapper.unwrap(vesselMask, branch);
-                List<AneurysmCandidate> sidewallAnomalies = unwrapped2D.findAnomalies();
-                
-                // CPRビューに展開図と検出された異常起伏をセット
-                viewCPR.setUnwrappedData(unwrapped2D, sidewallAnomalies);
-                
-                // 最初の枝を表示したら一旦ブレイク（UIのリスト選択で切り替える想定）
-                break; 
-            }
+        for (Branch branch : vesselTree.getBranches()) {
+//            if (!branch.isPruned()) {
+//                UnwrappedImage2D unwrapped2D = unwrapper.unwrap(vesselMask, branch);
+//                List<AneurysmCandidate> sidewallAnomalies = unwrapped2D.findAnomalies();
+//                
+//                // CPRビューに展開図と検出された異常起伏をセット
+//                viewCPR.setUnwrappedData(unwrapped2D, sidewallAnomalies);
+//                
+//                // 最初の枝を表示したら一旦ブレイク（UIのリスト選択で切り替える想定）
+//                break; 
+//            }
         }
     }
 
@@ -108,6 +106,6 @@ public class WorkflowController {
 
         // 3Dクロップ表示の更新（Volume Renderingに切り替えて対象部位にフォーカス）
         view3D.setMIPMode(false); // DVRモードへ
-        view3D.focusAndCrop(candidate.getCenterPoint(), 20); // 20ボクセル半径でクロップ
+//        view3D.focusAndCrop(candidate.getCenterPoint(), 20); // 20ボクセル半径でクロップ
     }
 }

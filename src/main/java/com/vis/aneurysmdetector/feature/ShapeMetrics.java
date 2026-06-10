@@ -9,6 +9,9 @@ import java.util.Set;
 
 /**
  * 指定された3D領域（ボクセル集合）から、幾何学的な形状特徴量を計算するクラス。
+ * 
+ * 将来的なVolumetry評価用
+ * 
  */
 public class ShapeMetrics {
 

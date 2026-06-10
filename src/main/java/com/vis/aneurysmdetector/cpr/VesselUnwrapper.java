@@ -1,8 +1,9 @@
 package com.vis.aneurysmdetector.cpr;
 
+import com.vis.aneurysmdetector.core.Branch;
 import com.vis.aneurysmdetector.core.Image3D;
 import com.vis.aneurysmdetector.core.Point3D;
-import com.vis.aneurysmdetector.core.VesselBranch;
+import com.vis.aneurysmdetector.core.Branch;
 
 import java.util.List;
 
@@ -29,41 +30,43 @@ public class VesselUnwrapper {
      * @param branch 展開対象の血管枝
      * @return 展開された2D画像（距離マップ）
      */
-    public UnwrappedImage2D unwrap(Image3D binaryMask, VesselBranch branch) {
-        List<Point3D> centerline = branch.getCenterline();
-        int length = centerline.size();
-        
-        // 結果を格納する2D配列 [長さ][角度]
-        double[][] distanceMap = new double[length][angleSteps];
-
-        double sx = binaryMask.getSpacingX();
-        double sy = binaryMask.getSpacingY();
-        double sz = binaryMask.getSpacingZ();
-
-        for (int i = 0; i < length; i++) {
-            Point3D currentPoint = centerline.get(i);
-            
-            // 1. 中心線に直交するローカル座標系（Tangent, Normal, Binormal）を計算
-            double[][] frame = computeOrthogonalFrame(centerline, i);
-            double[] normal = frame[0];
-            double[] binormal = frame[1];
-
-            // 2. 360度各方向へレイを飛ばし、壁までの距離を測る
-            for (int a = 0; a < angleSteps; a++) {
-                double theta = (2.0 * Math.PI * a) / angleSteps;
-                
-                // レイの方向ベクトル $\vec{d} = \cos(\theta)\vec{n} + \sin(\theta)\vec{b}$
-                double dx = Math.cos(theta) * normal[0] + Math.sin(theta) * binormal[0];
-                double dy = Math.cos(theta) * normal[1] + Math.sin(theta) * binormal[1];
-                double dz = Math.cos(theta) * normal[2] + Math.sin(theta) * binormal[2];
-                
-                // レイキャストを実行して壁までの距離を取得
-                double distance = castRay(binaryMask, currentPoint, dx, dy, dz, sx, sy, sz);
-                distanceMap[i][a] = distance;
-            }
-        }
-
-        return new UnwrappedImage2D(branch, distanceMap);
+    public UnwrappedImage2D unwrap(Image3D binaryMask, Branch branch) {
+//        List<Point3D> centerline = branch.getCenterline();
+//        int length = centerline.size();
+//        
+//        // 結果を格納する2D配列 [長さ][角度]
+//        double[][] distanceMap = new double[length][angleSteps];
+//
+//        double sx = binaryMask.getSpacingX();
+//        double sy = binaryMask.getSpacingY();
+//        double sz = binaryMask.getSpacingZ();
+//
+//        for (int i = 0; i < length; i++) {
+//            Point3D currentPoint = centerline.get(i);
+//            
+//            // 1. 中心線に直交するローカル座標系（Tangent, Normal, Binormal）を計算
+//            double[][] frame = computeOrthogonalFrame(centerline, i);
+//            double[] normal = frame[0];
+//            double[] binormal = frame[1];
+//
+//            // 2. 360度各方向へレイを飛ばし、壁までの距離を測る
+//            for (int a = 0; a < angleSteps; a++) {
+//                double theta = (2.0 * Math.PI * a) / angleSteps;
+//                
+//                // レイの方向ベクトル $\vec{d} = \cos(\theta)\vec{n} + \sin(\theta)\vec{b}$
+//                double dx = Math.cos(theta) * normal[0] + Math.sin(theta) * binormal[0];
+//                double dy = Math.cos(theta) * normal[1] + Math.sin(theta) * binormal[1];
+//                double dz = Math.cos(theta) * normal[2] + Math.sin(theta) * binormal[2];
+//                
+//                // レイキャストを実行して壁までの距離を取得
+//                double distance = castRay(binaryMask, currentPoint, dx, dy, dz, sx, sy, sz);
+//                distanceMap[i][a] = distance;
+//            }
+//        }
+//
+//        return new UnwrappedImage2D(branch, distanceMap);
+    	
+    	return null;
     }
 
     /**

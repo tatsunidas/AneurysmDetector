@@ -10,15 +10,13 @@ import org.lwjgl.opengl.awt.GLData;
 import ij.IJ;
 import ij.ImagePlus;
 import ij.plugin.FolderOpener;
-import ij.process.AutoThresholder;
 
 import javax.swing.*;
 import java.awt.*;
-import java.io.File;
 
 /**
  * Phase 2（前処理パイプライン）の動作を検証するためのテスト用実行クラス。
- * 提供された GLCanvas と VolumeLoader を用いて3Dレンダリングを行います。
+ * NLM -> Jerman -> Segmenter(Percentile + Morphology + CCA) -> Skeletonizer
  */
 public class Phase2TestRunner extends JFrame {
 
@@ -26,30 +24,26 @@ public class Phase2TestRunner extends JFrame {
     private GLCanvas skelCanvas;
 
     public Phase2TestRunner() {
-        setTitle("Phase 2: Preprocessing Pipeline Test");
+        setTitle("Phase 2: Preprocessing Pipeline Test (Jerman Filter + Morphology)");
         setSize(1200, 600);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLayout(new BorderLayout());
 
-        // 3Dビューアを左右に並べる分割ペイン
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
         splitPane.setResizeWeight(0.5);
 
-        // 1. OpenGLの設定データを作成（Viewer3DMainと同様）
         GLData data = new GLData();
         data.majorVersion = 3;
         data.minorVersion = 3;
         data.profile = GLData.Profile.CORE;
-        data.doubleBuffer = false; // swapBufferのためfalse
+        data.doubleBuffer = false;
         data.forwardCompatible = true;
 
-        // 左側：セグメンテーション結果の3Dビュー
         JPanel leftPanel = new JPanel(new BorderLayout());
         leftPanel.setBorder(BorderFactory.createTitledBorder("Vessel Segmentation (3D MIP)"));
         segCanvas = new GLCanvas(data);
         leftPanel.add(segCanvas, BorderLayout.CENTER);
 
-        // 右側：スケルトン化結果の3Dビュー
         JPanel rightPanel = new JPanel(new BorderLayout());
         rightPanel.setBorder(BorderFactory.createTitledBorder("Skeletonization (3D MIP)"));
         skelCanvas = new GLCanvas(data);
@@ -59,10 +53,9 @@ public class Phase2TestRunner extends JFrame {
         splitPane.setRightComponent(rightPanel);
         add(splitPane, BorderLayout.CENTER);
 
-        // レンダリングループ（約60FPSでキャンバスを更新）
         javax.swing.Timer timer = new javax.swing.Timer(16, e -> {
             if (segCanvas != null) {
-                segCanvas.render(); // AWTGLCanvasのメソッド
+                segCanvas.render();
                 segCanvas.repaint();
             }
             if (skelCanvas != null) {
@@ -74,9 +67,6 @@ public class Phase2TestRunner extends JFrame {
         timer.start();
     }
 
-    /**
-     * パイプラインを実行し、各ビューアに結果を転送します。
-     */
     public void runPipeline(String imagePath) {
         System.out.println("Loading image from: " + imagePath);
         ImagePlus rawImp = FolderOpener.open(imagePath);
@@ -86,63 +76,53 @@ public class Phase2TestRunner extends JFrame {
             );
             return;
         }
-        
         Image3D rawImage = new Image3D(rawImp);
 
         // --- 1. ノイズ除去 (NLM) ---
         DenoiseFilter denoiser = new DenoiseFilter(15, 1);
         Image3D denoisedImage = denoiser.apply(rawImage);
-        
-        // NLMの結果はImageJの標準ウィンドウで2Dスライスとして表示（比較用）
-        SwingUtilities.invokeLater(() -> denoisedImage.getImagePlus().show());
 
-        // --- 2. 血管セグメンテーション (閾値処理 + 3D CCA) ---
-        VesselSegmenter segmenter = new VesselSegmenter(0.001, 100);
-        Image3D segmentedMask = segmenter.segment(denoisedImage);
+        // --- 2. 血管強調 (Jerman 3D Filter) ---
+        // 血管の太さに合わせたスケールを設定 (1.0, 2.0, 3.0)
+        JermanFilter3D jermanFilter = new JermanFilter3D();
+        double[] sigmas = {1.0, 2.0, 3.0}; 
+        Image3D jermanImage = jermanFilter.apply(denoisedImage, sigmas);
+                
+//        IJ.saveAsTiff(jermanImage.getImagePlus(), "testJerman.tif");
         
-        // VolumeLoaderは内部でimp.close()を呼ぶため、破壊されないよう duplicate() を渡す
-        VolumeData segVol = VolumeLoader.loadDicom(segmentedMask.getImagePlus().duplicate());
-        
-        SwingUtilities.invokeLater(() -> {
-            if (segVol != null) {
-                segCanvas.setVolumeData(segVol);
-                segCanvas.setMIPMode(true); // 血管の全体像はMIPが見やすい
-            }
-        });
+		// --- 3. 血管セグメンテーション (Top-Percentile + Morphology + 3D CCA) ---
+		// デフォルト: 上位0.5%、微小ゴミ100vox、クロージング半径2.0
+		VesselSegmenter segmenter = new VesselSegmenter();
+		Image3D segmentedMask = segmenter.segment(jermanImage);
 
-        // --- 3. スケルトナイズ (細線化) ---
-        Skeletonizer skeletonizer = new Skeletonizer();
-        Image3D skeletonImage = skeletonizer.skeletonize(segmentedMask);
-        
-        VolumeData skelVol = VolumeLoader.loadDicom(skeletonImage.getImagePlus().duplicate());
-        
-        SwingUtilities.invokeLater(() -> {
-            if (skelVol != null) {
-                skelCanvas.setVolumeData(skelVol);
-                skelCanvas.setMIPMode(true); // スケルトンもMIPで表示
-            }
-        });
+		VolumeData segVol = VolumeLoader.loadDicom(segmentedMask.getImagePlus().duplicate());
+		SwingUtilities.invokeLater(() -> {
+			if (segVol != null) {
+				segCanvas.setVolumeData(segVol);
+				segCanvas.setMIPMode(true);
+			}
+		});
+
+		// --- 4. スケルトナイズ (細線化) ---
+		Skeletonizer skeletonizer = new Skeletonizer();
+		Image3D skeletonImage = skeletonizer.skeletonize(segmentedMask);
+
+		VolumeData skelVol = VolumeLoader.loadDicom(skeletonImage.getImagePlus().duplicate());
+		SwingUtilities.invokeLater(() -> {
+			if (skelVol != null) {
+				skelCanvas.setVolumeData(skelVol);
+				skelCanvas.setMIPMode(true);
+			}
+		});
 
         System.out.println("Pipeline testing completed successfully!");
     }
 
     public static void main(String[] args) {
-        // UIの構築はEDT上で行う
         SwingUtilities.invokeLater(() -> {
             Phase2TestRunner tester = new Phase2TestRunner();
             tester.setVisible(true);
-
-            // テスト用のサンプル画像パスを選択させるダイアログ
-//            JFileChooser chooser = new JFileChooser();
-//            chooser.setDialogTitle("Select MRA Image (TIFF or DICOM)");
-//            if (chooser.showOpenDialog(tester) == JFileChooser.APPROVE_OPTION) {
-//                String path = chooser.getSelectedFile().getAbsolutePath();
-//                
-//                // 別スレッドでパイプラインを実行し、UIフリーズを防ぐ
-//                new Thread(() -> tester.runPipeline(path)).start();
-//            }
-            
-            String path = "C:\\Users\\t_kob\\graphy-workspace\\aneurysmdetector\\test-mra\\2.25.60897258363892151286751972916588634459\\2.25.255462386210815247290642388116372930462";
+            String path = "./test-mra";
             new Thread(() -> tester.runPipeline(path)).start();
         });
     }

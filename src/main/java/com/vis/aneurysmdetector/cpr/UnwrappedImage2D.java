@@ -1,11 +1,10 @@
 package com.vis.aneurysmdetector.cpr;
 
 import com.vis.aneurysmdetector.core.AneurysmCandidate;
-import com.vis.aneurysmdetector.core.VesselBranch;
+import com.vis.aneurysmdetector.core.Branch;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * 血管を展開した2D画像（距離マップ）を保持し、異常起伏を探索するクラス。
@@ -13,7 +12,7 @@ import java.util.UUID;
  */
 public class UnwrappedImage2D {
 
-    private VesselBranch sourceBranch;
+    private Branch sourceBranch;
     
     // distanceMap[z][theta] : zは中心線のインデックス、thetaは角度のステップ
     private double[][] distanceMap;
@@ -25,7 +24,7 @@ public class UnwrappedImage2D {
     // UIの各解剖学的部位ごとのClearチェック用ステータス
     private boolean isCleared = false;
 
-    public UnwrappedImage2D(VesselBranch sourceBranch, double[][] distanceMap) {
+    public UnwrappedImage2D(Branch sourceBranch, double[][] distanceMap) {
         this.sourceBranch = sourceBranch;
         this.distanceMap = distanceMap;
         this.lengthSteps = distanceMap.length;
@@ -49,37 +48,37 @@ public class UnwrappedImage2D {
 
         double thresholdRatio = 1.5; // 基準半径の1.5倍以上の突出を異常とみなす
 
-        for (int z = 2; z < lengthSteps - 2; z++) { // 両端はノイズが多いため除外
-            double baselineRadius = calculateMedianRadiusAt(z);
-            if (baselineRadius <= 0) continue;
-
-            for (int t = 0; t < angleSteps; t++) {
-                double currentRadius = distanceMap[z][t];
-                
-                if (currentRadius > baselineRadius * thresholdRatio) {
-                    // 異常な起伏を検出。実際にはここで2Dの連結成分ラベリング等を行い
-                    // ひとまとまりの領域として抽出します。
-                    
-                    AneurysmCandidate candidate = new AneurysmCandidate(
-                            "Sidewall-" + UUID.randomUUID().toString(),
-                            AneurysmCandidate.CandidateType.SIDEWALL_ANEURYSM,
-                            sourceBranch.getCenterline().get(z) // 異常があった中心座標
-                    );
-                    
-                    candidate.setRelatedBranch(sourceBranch);
-                    candidate.setAnatomicalLabel(sourceBranch.getAnatomicalLabel());
-                    
-                    // 幾何学的特徴量（展開図上の高さや面積から擬似的に算出）
-                    candidate.setDiameterChangeRate(currentRadius / baselineRadius);
-                    candidate.setSaliencyScore(calculateLocalScore(currentRadius, baselineRadius));
-                    
-                    anomalies.add(candidate);
-                    
-                    // 同じZ断面での重複登録を防ぐため、一度見つけたら次のZへ進む（簡易実装）
-                    break; 
-                }
-            }
-        }
+//        for (int z = 2; z < lengthSteps - 2; z++) { // 両端はノイズが多いため除外
+//            double baselineRadius = calculateMedianRadiusAt(z);
+//            if (baselineRadius <= 0) continue;
+//
+//            for (int t = 0; t < angleSteps; t++) {
+//                double currentRadius = distanceMap[z][t];
+//                
+//                if (currentRadius > baselineRadius * thresholdRatio) {
+//                    // 異常な起伏を検出。実際にはここで2Dの連結成分ラベリング等を行い
+//                    // ひとまとまりの領域として抽出します。
+//                    
+//                    AneurysmCandidate candidate = new AneurysmCandidate(
+//                            "Sidewall-" + UUID.randomUUID().toString(),
+//                            AneurysmCandidate.CandidateType.SIDEWALL_ANEURYSM,
+//                            sourceBranch.getCenterline().get(z) // 異常があった中心座標
+//                    );
+//                    
+//                    candidate.setRelatedBranch(sourceBranch);
+//                    candidate.setAnatomicalLabel(sourceBranch.getAnatomicalLabel());
+//                    
+//                    // 幾何学的特徴量（展開図上の高さや面積から擬似的に算出）
+//                    candidate.setDiameterChangeRate(currentRadius / baselineRadius);
+//                    candidate.setSaliencyScore(calculateLocalScore(currentRadius, baselineRadius));
+//                    
+//                    anomalies.add(candidate);
+//                    
+//                    // 同じZ断面での重複登録を防ぐため、一度見つけたら次のZへ進む（簡易実装）
+//                    break; 
+//                }
+//            }
+//        }
         return anomalies;
     }
 
@@ -100,7 +99,7 @@ public class UnwrappedImage2D {
 
     // --- Getters & Setters ---
 
-    public VesselBranch getSourceBranch() { return sourceBranch; }
+    public Branch getSourceBranch() { return sourceBranch; }
     public double[][] getDistanceMap() { return distanceMap; }
     public int getAngleSteps() { return angleSteps; }
     public int getLengthSteps() { return lengthSteps; }

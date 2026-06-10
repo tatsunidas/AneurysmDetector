@@ -1,6 +1,7 @@
 package com.vis.aneurysmdetector.preprocessing;
 
 import com.vis.aneurysmdetector.core.Image3D;
+import com.vis.dicom.image.GDicomTools;
 
 // 提供されたパッケージからのインポート
 import de.biomedical_imaging.ij.nlMeansPlugin.NLMeansDenoising_;
@@ -61,6 +62,8 @@ public class DenoiseFilter {
             // ====================================================================
             nlmPlugin.applyNonLocalMeans(ip, effectiveSigma);
         }
+        
+        GDicomTools.headerCopy(inputImage.getImagePlus(), imp);
         
         System.out.println("Denoising completed.");
         return new Image3D(imp);

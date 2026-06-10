@@ -1,7 +1,7 @@
 package com.vis.aneurysmdetector.anatomy;
 
-import com.vis.aneurysmdetector.core.BifurcationNode;
-import com.vis.aneurysmdetector.core.VesselBranch;
+import com.vis.aneurysmdetector.core.Node;
+import com.vis.aneurysmdetector.core.Branch;
 import com.vis.aneurysmdetector.core.VesselTree;
 
 import java.util.List;
@@ -28,7 +28,7 @@ public class AnatomyLabeler {
      * @param tree 構築済みの血管ツリー
      */
     public void label(VesselTree tree) {
-        List<VesselBranch> branches = tree.getBranches();
+        List<Branch> branches = tree.getBranches();
         if (branches == null || branches.isEmpty()) return;
 
         // ====================================================================
@@ -41,25 +41,28 @@ public class AnatomyLabeler {
         // ====================================================================
 
         // 例: ルートの特定（簡略化されたモックロジック）
-        VesselBranch rightICA = findRootBranch(tree, "Right_ICA");
-        VesselBranch leftICA = findRootBranch(tree, "Left_ICA");
-        VesselBranch basilar = findRootBranch(tree, "BA");
+        Branch rightICA = findRootBranch(tree, "Right_ICA");
+        Branch leftICA = findRootBranch(tree, "Left_ICA");
+        Branch basilar = findRootBranch(tree, "BA");
 
-        if (rightICA != null) {
-            rightICA.setAnatomicalLabel("R-ICA");
-            propagateLabels(rightICA, "R-");
-        }
-        
-        if (leftICA != null) {
-            leftICA.setAnatomicalLabel("L-ICA");
-            propagateLabels(leftICA, "L-");
-        }
+        /*
+         * 一旦コメントアウト
+         */
+//        if (rightICA != null) {
+//            rightICA.setAnatomicalLabel("R-ICA");
+//            propagateLabels(rightICA, "R-");
+//        }
+//        
+//        if (leftICA != null) {
+//            leftICA.setAnatomicalLabel("L-ICA");
+//            propagateLabels(leftICA, "L-");
+//        }
     }
 
     /**
      * Z軸（スライス位置）が最も低く、特定の条件を満たす枝をルートとして特定します。
      */
-    private VesselBranch findRootBranch(VesselTree tree, String type) {
+    private Branch findRootBranch(VesselTree tree, String type) {
         // FIXME: 実際のロジックを実装
         // Z座標の最小値を持つ端点を含み、かつX,Y座標のヒューリスティクス
         // （例えばXが中央より右なら右ICA、左なら左ICA、中央後方ならBA）で特定。
@@ -69,29 +72,29 @@ public class AnatomyLabeler {
     /**
      * ルートから再帰的にグラフを辿り、分岐の方向（ベクトル）からMCAやACAを判定します。
      */
-    private void propagateLabels(VesselBranch currentBranch, String sidePrefix) {
-        BifurcationNode nextNode = currentBranch.getEndNode();
+    private void propagateLabels(Branch currentBranch, String sidePrefix) {
+        Node nextNode = currentBranch.getEndNode();
         if (nextNode == null) return;
 
-        List<VesselBranch> children = nextNode.getConnectedBranches();
+        List<Branch> children = nextNode.getConnectedBranches();
         
-        for (VesselBranch child : children) {
+        for (Branch child : children) {
             // 逆流を防ぐ
             if (child == currentBranch) continue;
 
             // 枝の始点から終点への方向ベクトルを計算
-            double[] vector = calculateDirectionVector(child);
+//            double[] vector = calculateDirectionVector(child);
             
             // X方向（左右）の成分が大きい場合はMCA
-            if (Math.abs(vector[0]) > Math.abs(vector[1]) && Math.abs(vector[0]) > Math.abs(vector[2])) {
-                child.setAnatomicalLabel(sidePrefix + "MCA");
-            } 
-            // Y方向（前方）の成分が大きい場合はACA
-            else if (vector[1] < 0) { // Y軸の向き（前後）はDICOMの定義(LPS/RAS)に依存
-                child.setAnatomicalLabel(sidePrefix + "ACA");
-            } else {
-                child.setAnatomicalLabel(sidePrefix + "Unknown");
-            }
+//            if (Math.abs(vector[0]) > Math.abs(vector[1]) && Math.abs(vector[0]) > Math.abs(vector[2])) {
+//                child.setAnatomicalLabel(sidePrefix + "MCA");
+//            } 
+//            // Y方向（前方）の成分が大きい場合はACA
+//            else if (vector[1] < 0) { // Y軸の向き（前後）はDICOMの定義(LPS/RAS)に依存
+//                child.setAnatomicalLabel(sidePrefix + "ACA");
+//            } else {
+//                child.setAnatomicalLabel(sidePrefix + "Unknown");
+//            }
 
             // 再帰的にラベリング
             propagateLabels(child, sidePrefix);
@@ -101,17 +104,17 @@ public class AnatomyLabeler {
     /**
      * 枝の始点から終点への物理的な方向ベクトルを計算します。
      */
-    private double[] calculateDirectionVector(VesselBranch branch) {
-        if (branch.getCenterline().size() < 2) return new double[]{0,0,0};
-        
-        com.vis.aneurysmdetector.core.Point3D start = branch.getCenterline().get(0);
-        com.vis.aneurysmdetector.core.Point3D end = branch.getCenterline().get(branch.getCenterline().size() - 1);
-        
-        // 物理サイズ（Spacing）を考慮したベクトル計算
-        double dx = (end.x - start.x) * spacingX;
-        double dy = (end.y - start.y) * spacingY;
-        double dz = (end.z - start.z) * spacingZ;
-        
-        return new double[]{dx, dy, dz};
-    }
+//    private double[] calculateDirectionVector(Branch branch) {
+//        if (branch.getCenterline().size() < 2) return new double[]{0,0,0};
+//        
+//        com.vis.aneurysmdetector.core.Point3D start = branch.getCenterline().get(0);
+//        com.vis.aneurysmdetector.core.Point3D end = branch.getCenterline().get(branch.getCenterline().size() - 1);
+//        
+//        // 物理サイズ（Spacing）を考慮したベクトル計算
+//        double dx = (end.x - start.x) * spacingX;
+//        double dy = (end.y - start.y) * spacingY;
+//        double dz = (end.z - start.z) * spacingZ;
+//        
+//        return new double[]{dx, dy, dz};
+//    }
 }

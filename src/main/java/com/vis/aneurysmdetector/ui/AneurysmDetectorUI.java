@@ -1,26 +1,11 @@
 package com.vis.aneurysmdetector.ui;
 
-import com.vis.aneurysmdetector.anatomy.GraphPruner;
-import com.vis.aneurysmdetector.anatomy.TreeGraphBuilder;
 import com.vis.aneurysmdetector.core.AneurysmCandidate;
 import com.vis.aneurysmdetector.core.CandidateType;
-import com.vis.aneurysmdetector.core.Image3D;
 import com.vis.aneurysmdetector.core.Point3D;
-import com.vis.aneurysmdetector.core.VesselTree;
-import com.vis.aneurysmdetector.detection.AneurysmDetector;
-import com.vis.aneurysmdetector.feature.DistanceTransform3D;
-import com.vis.aneurysmdetector.feature.FeatureExtractor;
-import com.vis.aneurysmdetector.preprocessing.DenoiseFilter;
-import com.vis.aneurysmdetector.preprocessing.JermanFilter3D;
-import com.vis.aneurysmdetector.preprocessing.Skeletonizer;
-import com.vis.aneurysmdetector.preprocessing.VesselSegmenter;
 import com.vis.core.view.D2.ui.glasses.Praparat;
-import com.vis.core.view.D2.ui.glasses.Praparat.ViewMode;
 import com.vis.core.view.D2.ui.glasses.SlideGlass;
 import com.vis.core.view.D3.ui.VolumeData;
-import com.vis.core.view.D3.ui.VolumeLoader;
-
-import ij.plugin.FolderOpener;
 
 import org.lwjgl.opengl.awt.GLData;
 
@@ -107,7 +92,7 @@ public class AneurysmDetectorUI extends JFrame {
 
 				// 2. AneurysmCADeApp の解析パイプラインに新しいフォルダのパスを渡して呼び出す
 				// (プログレスダイアログが自動で立ち上がり、終わると新しいUIが開きます)
-				AneurysmCADeApp.startAnalysis(selectedFolder.getAbsolutePath());
+				AneurysmCADeApp.startAnalysis(selectedFolder.getAbsolutePath(), isStandalone);
 			}
         });
         fileMenu.add(openItem);
@@ -728,86 +713,5 @@ public class AneurysmDetectorUI extends JFrame {
 		public boolean isSelected() {
 			return isSelected;
 		}
-	}
-
-	// ========================================================================
-	// UI テスト起動 (VolumeData に null を渡してUI骨組みだけを起動可能)
-	// ========================================================================
-	public static void main(String[] args) {
-		SwingUtilities.invokeLater(() -> {
-			String path = "./test-mra/";
-			ij.ImagePlus rawImp = FolderOpener.open(path);
-			Praparat pp = new Praparat(rawImp, null, ViewMode.SingleGrid, true);
-
-			System.out.println("Loading image from: " + path);
-			if (rawImp == null) {
-				System.err.println("Failed to load image.");
-				return;
-			}
-			Image3D rawImage = new Image3D(rawImp);
-
-			// ==============================================================
-			// Phase 1 & 2: Preprocessing
-			// ==============================================================
-			System.out.println("\n--- Phase 1 & 2: Preprocessing ---");
-			DenoiseFilter denoiser = new DenoiseFilter(15, 1);
-			Image3D denoisedImage = denoiser.apply(rawImage);
-
-			JermanFilter3D jermanFilter = new JermanFilter3D();
-			double[] sigmas = { 1.0, 2.0, 3.0 };
-			Image3D jermanImage = jermanFilter.apply(denoisedImage, sigmas);
-
-			VesselSegmenter segmenter = new VesselSegmenter();
-			Image3D segmentedMask = segmenter.segment(jermanImage);
-
-			Skeletonizer skeletonizer = new Skeletonizer();
-			Image3D skeletonImage = skeletonizer.skeletonize(segmentedMask);
-
-			// ==============================================================
-			// Phase 3: Graph Construction & Optimization
-			// ==============================================================
-			System.out.println("\n--- Phase 3: Graph Construction & Optimization ---");
-			TreeGraphBuilder builder = new TreeGraphBuilder();
-			VesselTree tree = builder.build(skeletonImage);
-
-			GraphPruner pruner = new GraphPruner();
-			pruner.prune(tree, 3.0);
-			pruner.mergeLinearBranches(tree);
-			tree.printStatistics();
-
-			// ==============================================================
-			// Phase 4: Feature Extraction & Detection
-			// ==============================================================
-			System.out.println("\n--- Phase 4: Feature Extraction & Detection ---");
-
-			// 1. 距離マップの生成
-			DistanceTransform3D dt3D = new DistanceTransform3D();
-			Image3D distanceMap = dt3D.computeDistanceMap(segmentedMask);
-
-			// 2. 特徴量の抽出 (Radius, Bulge Ratio, Shape Index, Gaussian Curvature)
-			FeatureExtractor extractor = new FeatureExtractor();
-			extractor.extractInscribedRadii(tree, distanceMap);
-			extractor.extractBulgeRatiosAndCurvatures(tree, segmentedMask);
-
-			// 3. 動脈瘤の検出 (閾値: Bulge>=1.35, SI>=0.65, K>0)
-			AneurysmDetector detector = new AneurysmDetector(1.35, 0.65, 0.0);
-			List<AneurysmCandidate> candidates = detector.detect(tree);
-
-			// ==============================================================
-			// 最終結果の出力
-			// ==============================================================
-			System.out.println("\n--- Final Detection Results ---");
-			if (candidates.isEmpty()) {
-				System.out.println("No aneurysms detected.");
-			} else {
-				for (int i = 0; i < candidates.size(); i++) {
-					System.out.println("Candidate #" + (i + 1) + ": " + candidates.get(i).toString());
-				}
-			}
-			VolumeData vd = VolumeLoader.loadDicom(rawImp);
-			AneurysmDetectorUI ui = new AneurysmDetectorUI(candidates, vd, pp, true);
-			ui.loadSkeletonColorMap(tree);
-			ui.setVisible(true);
-		});
 	}
 }

@@ -50,19 +50,19 @@ public class AneurysmCADeApp {
 //                startAnalysis(selectedFile.getAbsolutePath());
 //            }
         	String path = "./test-mra";
-        	startAnalysis(path);
+        	startAnalysis(path, true);
         });
     }
     
-    public AneurysmCADeApp(String imageDir) {
-    	startAnalysis(imageDir);
+    public AneurysmCADeApp(String imageDir, boolean isStandalone) {
+    	startAnalysis(imageDir, isStandalone);
     }
     
-    public AneurysmCADeApp(Praparat pp) {
-    	startAnalysis(pp.getImagePlus());
+    public AneurysmCADeApp(Praparat pp, boolean isStandalone) {
+    	startAnalysis(pp.getImagePlus(), isStandalone);
     }
 
-    public static void startAnalysis(String imagePath) {
+    public static void startAnalysis(String imagePath, boolean isStandalone) {
         ImagePlus rawImp = null;
         if(new File(imagePath).isDirectory()) {
         	rawImp = ij.plugin.FolderOpener.open(imagePath);
@@ -72,10 +72,10 @@ public class AneurysmCADeApp {
         
         if (rawImp == null) throw new RuntimeException("Image load failed.");
         
-        startAnalysis(rawImp);
+        startAnalysis(rawImp, isStandalone);
     }
     
-    public static void startAnalysis(ImagePlus volume) {
+    public static void startAnalysis(ImagePlus volume, boolean isStandalone) {
         // プログレスダイアログの作成
         JDialog progressDialog = new JDialog((Frame) null, "Analyzing", true);
         progressDialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
@@ -166,7 +166,7 @@ public class AneurysmCADeApp {
                     get(); // 例外が起きていればここでキャッチされる
                     
                     // UIの起動
-                    AneurysmDetectorUI ui = new AneurysmDetectorUI(candidates, segVolume, pp, true);
+                    AneurysmDetectorUI ui = new AneurysmDetectorUI(candidates, segVolume, pp, isStandalone);
                     // ★ 追加: 構築したVesselTreeをUIに渡し、カラーマップ中心線を生成！
                     ui.loadSkeletonColorMap(vesselTree);
                     ui.setVisible(true);

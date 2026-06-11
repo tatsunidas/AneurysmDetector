@@ -1,3 +1,6 @@
+/**
+ * copyright visionary imaging services, inc.
+ */
 package com.vis.aneurysmdetector.feature;
 
 import com.vis.aneurysmdetector.core.Image3D;
@@ -8,6 +11,8 @@ import ij.process.FloatProcessor;
 /**
  * 3D空間におけるユークリッド距離変換（近似: Chamfer Distance Transform）を行うクラス。
  * 血管マスク（バイナリ画像）の内部ピクセルから、最も近い境界（背景）までの物理距離(mm)を計算します。
+ * 
+ * @author tatsunidas
  */
 public class DistanceTransform3D {
 

@@ -1,3 +1,6 @@
+/**
+ * copyright visionary imaging services, inc.
+ */
 package com.vis.aneurysmdetector.core;
 
 import java.util.ArrayList;
@@ -6,6 +9,8 @@ import java.util.List;
 /**
  * 検出された動脈瘤の候補を表現するクラス。
  * 危険度（最大膨らみ率など）や、3D空間上の位置情報を保持します。
+ * 
+ * @author tatsunidas
  */
 public class AneurysmCandidate {
 
@@ -19,10 +24,6 @@ public class AneurysmCandidate {
 
     // 最も膨らんでいる中心座標
     private Point3D peakPoint;
-
-    // --- UI / 分類ステータス ---
-    // ユーザーが「これは瘤ではない（偽陽性）」と判断した場合にtrueになる
-    private boolean isCleared = false;
     
  // --- 追加: 危険度スコア (0.0 ~ 100.0) ---
     private double score = 0.0;
@@ -79,14 +80,6 @@ public class AneurysmCandidate {
 
     public Point3D getPeakPoint() {
         return peakPoint;
-    }
-
-    public boolean isCleared() {
-        return isCleared;
-    }
-
-    public void setCleared(boolean cleared) {
-        isCleared = cleared;
     }
 
     public CandidateType getType() {

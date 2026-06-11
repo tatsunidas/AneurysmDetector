@@ -1,3 +1,6 @@
+/**
+ * copyright visionary imaging services, inc.
+ */
 package com.vis.aneurysmdetector.detection;
 
 import com.vis.aneurysmdetector.core.AneurysmCandidate;
@@ -10,6 +13,8 @@ import java.util.List;
 
 /**
  * 血管ネットワークの特徴量を評価し、動脈瘤の候補を検出するクラス。
+ * 
+ * @author tatsunidas
  */
 public class AneurysmDetector {
 

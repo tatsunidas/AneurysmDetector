@@ -1,8 +1,10 @@
+/**
+ * copyright visionary imaging services, inc.
+ */
 package com.vis.aneurysmdetector.preprocessing;
 
 import com.vis.aneurysmdetector.core.Image3D;
 import com.vis.aneurysmdetector.core.Point3D;
-import com.vis.dicom.Tag;
 import com.vis.dicom.image.GDicomTools;
 
 import ij.ImagePlus;
@@ -18,6 +20,8 @@ import java.util.Queue;
 /**
  * MRAボリューム全体のヒストグラムから上位指定パーセントの血管領域を抽出し、 3Dクロージング、3D穴埋め、3D
  * CCAを適用して極めてクリーンな血管マスクを生成するクラス。
+ * 
+ * @author tatsunidas
  */
 public class VesselSegmenter {
 

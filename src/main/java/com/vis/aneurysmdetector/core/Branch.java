@@ -43,8 +43,7 @@ public class Branch {
             this.gaussianCurvatures.add(0.0);
         }
     }
-
-    // ... (以前のゲッターはそのまま)
+    
     public Node getStartNode() { return startNode; }
     public Node getEndNode() { return endNode; }
     public List<Point3D> getPath() { return path; }

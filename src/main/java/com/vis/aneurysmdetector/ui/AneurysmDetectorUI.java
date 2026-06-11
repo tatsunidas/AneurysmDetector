@@ -1,13 +1,27 @@
 package com.vis.aneurysmdetector.ui;
 
+import com.vis.aneurysmdetector.anatomy.GraphPruner;
+import com.vis.aneurysmdetector.anatomy.TreeGraphBuilder;
 import com.vis.aneurysmdetector.core.AneurysmCandidate;
 import com.vis.aneurysmdetector.core.CandidateType;
+import com.vis.aneurysmdetector.core.Image3D;
 import com.vis.aneurysmdetector.core.Point3D;
+import com.vis.aneurysmdetector.core.VesselTree;
+import com.vis.aneurysmdetector.detection.AneurysmDetector;
+import com.vis.aneurysmdetector.feature.DistanceTransform3D;
+import com.vis.aneurysmdetector.feature.FeatureExtractor;
+import com.vis.aneurysmdetector.preprocessing.DenoiseFilter;
+import com.vis.aneurysmdetector.preprocessing.JermanFilter3D;
+import com.vis.aneurysmdetector.preprocessing.Skeletonizer;
+import com.vis.aneurysmdetector.preprocessing.VesselSegmenter;
 import com.vis.core.view.D2.ui.glasses.Praparat;
+import com.vis.core.view.D2.ui.glasses.Praparat.ViewMode;
 import com.vis.core.view.D2.ui.glasses.SlideGlass;
-import com.vis.core.view.D3.roi.FreeFormRoi3D;
-import com.vis.core.view.D3.roi.SphereRoi3D;
 import com.vis.core.view.D3.ui.VolumeData;
+import com.vis.core.view.D3.ui.VolumeLoader;
+
+import ij.plugin.FolderOpener;
+
 import org.lwjgl.opengl.awt.GLData;
 
 import javax.swing.*;
@@ -20,406 +34,616 @@ import java.util.List;
 
 @SuppressWarnings("serial")
 public class AneurysmDetectorUI extends JFrame {
+	
+	// ★ 追加: 単体起動フラグ (trueならアプリ全体を終了、falseならこの画面だけを閉じる)
+    private final boolean isStandalone;
 
-    private JPanel mainVisualPanel;
-    private AneurysmGLCanvas glCanvas; // ★追加: カスタムGLCanvas
-    
-    private JPanel judgePanel;
-    private JLabel judgeLabel;
-    private JPanel listContainer;
-    private JCheckBox allClearCheckBox;
-    
-    JToggleButton btnShowMarkers;
+	private JPanel mainVisualPanel;
+	private AneurysmGLCanvas glCanvas; // ★追加: カスタムGLCanvas
 
-    private List<AneurysmCandidate> candidateList;
-    private List<CandidateItemPanel> itemPanelList;
-    
-    private VolumeData volumeData;
-    private Praparat praparat;
-    
-    AneurysmCandidate highlightedCandidate;
-    
- // ROIカラーの設定 (ID 1=通常赤, ID 2=ハイライト黄)
-    private static final int ROI_ID_NORMAL = 1;
-    private static final int ROI_ID_HIGHLIGHT = 2;
+	private JPanel judgePanel;
+	private JLabel judgeLabel;
+	private JPanel listContainer;
+	private JCheckBox btnAllNormal;
 
-    // ★追加: VolumeData をコンストラクタで受け取る
-    public AneurysmDetectorUI(List<AneurysmCandidate> candidates, VolumeData volumeData, Praparat praparat) {
-        this.candidateList = candidates;
-        this.volumeData = volumeData;
-        this.praparat = praparat;
-        
-        this.itemPanelList = new ArrayList<>();
+	// --- フィルター用ラジオボタン ---
+	private JRadioButton rbSuspectedOnly;
+	private JRadioButton rbNormalOnly;
+	private JRadioButton rbAll;
 
-        setTitle("Cerebral Aneurysm Computer-Aided Detection (CADe) Workstation");
-        setSize(1280, 800);
-        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setLocationRelativeTo(null);
+	private List<AneurysmCandidate> candidateList;
+	private List<CandidateItemPanel> itemPanelList;
 
-        setLayout(new BorderLayout());
+	private Praparat praparat;
 
-        JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
-        splitPane.setDividerLocation(850);
-        splitPane.setResizeWeight(0.7);
+	AneurysmCandidate highlightedCandidate;
 
-        // ====================================================================
-        // 1. 左側: MIP/VR表示パネル (GLCanvas の統合)
-        // ====================================================================
-        mainVisualPanel = new JPanel(new BorderLayout());
-        
-        // 1.1 ツールバー (表示トグルスイッチ群)
-        JToolBar toolBar = new JToolBar();
-        toolBar.setFloatable(false);
-        toolBar.setBorder(new EmptyBorder(5, 5, 5, 5));
-        
-        btnShowMarkers = new JToggleButton("🔴 Show Sphere Marker", true);
-        JToggleButton btnShowBoxes = new JToggleButton("🔲 Boundingbox", false);
-        
-         	// ★ マーカーON/OFFトグルボタン
-        btnShowMarkers = new JToggleButton("🔴 Sphere Marker (ON)", true);
-        btnShowMarkers.addActionListener(e -> {
-            boolean isShowing = btnShowMarkers.isSelected();
-            btnShowMarkers.setText(isShowing ? "🔴 Sphere Marker (ON)" : "⚪ Sphere Marker (OFF)");
-            updateMarkersToCanvas(); // トグル時にROIを再生成/更新
-        });
-        
-        btnShowBoxes.addActionListener(e -> {
-            glCanvas.setShowBoundingBoxes(btnShowBoxes.isSelected());
-            glCanvas.repaint();
-        });
-        
-        toolBar.add(btnShowMarkers);
-        toolBar.addSeparator();
-        toolBar.add(btnShowBoxes);
-        
-        mainVisualPanel.add(toolBar, BorderLayout.NORTH);
+	public AneurysmDetectorUI(List<AneurysmCandidate> candidates, VolumeData volumeData, Praparat praparat, boolean isStandalone) {
+		this.candidateList = candidates;
+		this.praparat = praparat;
+		
+		this.isStandalone = isStandalone; // ★ フラグを保存
 
-        // 1.2 GLCanvas のセットアップ
-        GLData data = new GLData();
-        data.majorVersion = 3;
-        data.minorVersion = 3;
-        data.profile = GLData.Profile.CORE;
-        
-        glCanvas = new AneurysmGLCanvas(data);
-        if (volumeData != null) {
-            glCanvas.setVolumeData(volumeData);
-            glCanvas.setMIPMode(true);
-            glCanvas.setShowRoi(true); // ★ ROI描画を有効化
+		this.itemPanelList = new ArrayList<>();
+
+		setTitle("Cerebral Aneurysm Computer-Aided Detection (CADe) Workstation");
+		setSize(1280, 800);
+		setLocationRelativeTo(null);
+		
+		// ★ 修正: フラグに応じて、右上の「×」ボタンを押したときの挙動を自動分岐
+        if (isStandalone) {
+            setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE); // アプリ全体を終了
+        } else {
+            setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE); // この画面だけを破棄
         }
-        glCanvas.setCandidates(candidateList); // 候補データをCanvasに渡す
-        
-        mainVisualPanel.add(glCanvas, BorderLayout.CENTER);
-        splitPane.setLeftComponent(mainVisualPanel);
-
+		
+		setLayout(new BorderLayout());
+		
+		// ====================================================================
+        // ★ 追加: メニューバー (JMenuBar, JMenu, JMenuItem) のセットアップ
         // ====================================================================
-        // 2. 右側: サイドバー (判定パネル & チェックリスト)
+        JMenuBar menuBar = new JMenuBar();
+
+        // --- 1. File メニュー ---
+        JMenu fileMenu = new JMenu("File");
+
+        JMenuItem openItem = new JMenuItem("📁 Open DICOM Folder...");
+        openItem.addActionListener(e -> {
+            JFileChooser fileChooser = new JFileChooser();
+            fileChooser.setDialogTitle("Select DICOM Series Folder");
+            fileChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY); // フォルダのみ選択可能にする
+            fileChooser.setAcceptAllFileFilterUsed(false);
+
+			// ダイアログを表示
+			int userSelection = fileChooser.showOpenDialog(this);
+			if (userSelection == JFileChooser.APPROVE_OPTION) {
+				java.io.File selectedFolder = fileChooser.getSelectedFile();
+				com.vis.core.log.Log.logger.info("Selected folder: " + selectedFolder.getAbsolutePath());
+				// ==========================================================
+				// ★ 実装: UIを破棄して、新しいデータで解析を再スタートする
+				// ==========================================================
+				// 1. 現在の 3D Viewer 画面を閉じてリソースを解放する
+				this.dispose();
+
+				// 2. AneurysmCADeApp の解析パイプラインに新しいフォルダのパスを渡して呼び出す
+				// (プログレスダイアログが自動で立ち上がり、終わると新しいUIが開きます)
+				AneurysmCADeApp.startAnalysis(selectedFolder.getAbsolutePath());
+			}
+        });
+        fileMenu.add(openItem);
+
+        fileMenu.addSeparator(); // 区切り線
+
+        JMenuItem exitItem = new JMenuItem("Exit");
+		// ==========================================================
+		// ★ 修正: 単体起動かどうかに応じて終了処理をスマートに分岐する
+		// ==========================================================
+		exitItem.addActionListener(e -> {
+			if (isStandalone) {
+				com.vis.core.log.Log.logger.info("Standalone mode: Exiting application.");
+				System.exit(0); // アプリ全体を完全に終了
+			} else {
+				com.vis.core.log.Log.logger.info("Sub-window mode: Disposing this frame.");
+				this.dispose(); // この画面だけを閉じ、メモリを解放して呼出元に戻る
+			}
+		});
+        fileMenu.add(exitItem);
+
+        // --- 2. Process メニュー ---
+        JMenu processMenu = new JMenu("Process");
+        
+        JMenuItem runDetectionItem = new JMenuItem("🚀 Run Pipeline");
+        processMenu.add(runDetectionItem);
+
+        processMenu.addSeparator(); // 区切り線
+
+        JMenuItem clearToNormalItem = new JMenuItem("🧹 Set All to NORMAL");
+        // 先ほど実装した一括変更ロジックと連動
+        clearToNormalItem.addActionListener(e -> handleAllNormal());
+        processMenu.add(clearToNormalItem);
+
+        // --- 3. メニューバーへ追加して JFrame にセット ---
+        menuBar.add(fileMenu);
+        menuBar.add(processMenu);
+        setJMenuBar(menuBar); // JFrameにメニューバーを登録
         // ====================================================================
-        JPanel sidebarPanel = new JPanel(new BorderLayout());
-        sidebarPanel.setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, Color.DARK_GRAY));
 
-        buildJudgePanel();
-        sidebarPanel.add(judgePanel, BorderLayout.NORTH);
+		JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
+		splitPane.setDividerLocation(750);
+		splitPane.setResizeWeight(0.7);
 
-        listContainer = new JPanel();
-        listContainer.setLayout(new BoxLayout(listContainer, BoxLayout.Y_AXIS));
-        
-        JScrollPane scrollPane = new JScrollPane(listContainer);
-        scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
-        sidebarPanel.add(scrollPane, BorderLayout.CENTER);
+		// ====================================================================
+		// 1. 左側: MIP/VR表示パネル (GLCanvas の統合)
+		// ====================================================================
+		mainVisualPanel = new JPanel(new BorderLayout());
 
-        JPanel southPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        southPanel.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Color.LIGHT_GRAY));
-        allClearCheckBox = new JCheckBox("全てClear (Clear All Candidates)");
-        allClearCheckBox.setFont(new Font("Meiryo", Font.BOLD, 13));
-        allClearCheckBox.addActionListener(e -> handleAllClear(allClearCheckBox.isSelected()));
-        southPanel.add(allClearCheckBox);
-        sidebarPanel.add(southPanel, BorderLayout.SOUTH);
+		// 1.1 ツールバー (表示トグルスイッチ群)
+		JToolBar toolBar = new JToolBar();
+		toolBar.setFloatable(false);
+		toolBar.setBorder(new EmptyBorder(5, 5, 5, 5));
 
-        splitPane.setRightComponent(sidebarPanel);
-        add(splitPane, BorderLayout.CENTER);
-
-        // データの流し込みと初期化
-        populateCandidates();
-        updateJudgeStatus();
-     // ★ 初回のマーカー(ROI)生成
-        updateMarkersToCanvas();
-        
-
-        // Canvasの再描画タイマー（60fps駆動）
-        Timer timer = new Timer(16, e -> {
+		JToggleButton btnShowBoxes = new JToggleButton("🔲 Boundingbox", false);
+		btnShowBoxes.addActionListener(e -> {
+			boolean isShowing = btnShowBoxes.isSelected();
+			btnShowBoxes.setText(isShowing ? "🔲 3D boundingbox (ON)" : "🔲 3D boundingbox (OFF)");
+			glCanvas.setShowBoundingBoxes(isShowing);
+			glCanvas.repaint();
+		});
+		toolBar.add(btnShowBoxes);
+		
+		JToggleButton btnShowAllBoxes = new JToggleButton("📦 Show All Boxes (ON)", true);
+        btnShowAllBoxes.addActionListener(e -> {
+            boolean showAll = btnShowAllBoxes.isSelected();
+            btnShowAllBoxes.setText(showAll ? "📦 Show All Boxes (ON)" : "📦 Selected Box Only");
             if (glCanvas != null) {
-                glCanvas.render();
+                glCanvas.setShowAllBoundingBoxes(showAll);
                 glCanvas.repaint();
             }
         });
-        timer.setRepeats(true);
-        timer.start();
-    }
+        toolBar.add(btnShowAllBoxes);
 
-    private void buildJudgePanel() {
-        judgePanel = new JPanel(new BorderLayout());
-        judgePanel.setPreferredSize(new Dimension(350, 60));
-        judgePanel.setBorder(new EmptyBorder(10, 15, 10, 15));
-        
-        judgeLabel = new JLabel("", SwingConstants.CENTER);
-        judgeLabel.setFont(new Font("Meiryo", Font.BOLD, 18));
-        judgePanel.add(judgeLabel, BorderLayout.CENTER);
-    }
+		// ★ スケルトン表示トグルボタンを追加
+		JToggleButton btnShowSkel = new JToggleButton("🧬 Saliency Skelton (OFF)", false);
+		btnShowSkel.addActionListener(e -> {
+			boolean isShowing = btnShowSkel.isSelected();
+			btnShowSkel.setText(isShowing ? "🧬 Saliency Skelton (ON)" : "🧬 Saliency Skelton (OFF)");
+			glCanvas.setShowSkeleton(isShowing);
+			glCanvas.repaint();
+		});
+		toolBar.addSeparator();
+		toolBar.add(btnShowSkel);
+		
+		// ==========================================================
+        // ★ 追加: 3Dビューの回転・ズーム・注視点を初期状態に戻すリセットボタン
+        // ==========================================================
+        JButton btnResetView = new JButton("🔄 Reset View");
+        btnResetView.addActionListener(e -> {
+            if (glCanvas != null) {
+                glCanvas.resetCamera();
+            }
+        });
+        toolBar.addSeparator();
+        toolBar.add(btnResetView);
 
-    private void populateCandidates() {
-        listContainer.removeAll();
-        itemPanelList.clear();
+		mainVisualPanel.add(toolBar, BorderLayout.NORTH);
 
-        for (AneurysmCandidate candidate : candidateList) {
-            CandidateItemPanel itemPanel = new CandidateItemPanel(candidate);
-            listContainer.add(itemPanel);
-            itemPanelList.add(itemPanel);
-        }
-        
-        listContainer.add(Box.createVerticalGlue());
-        listContainer.revalidate();
-        listContainer.repaint();
-    }
-    
-    /**
-     * 現在の候補リストとUIの状態（ON/OFF、ハイライト）に基づいて、
-     * FreeFormRoi3D のリストを生成し、GLCanvas に転送します。
+		// 1.2 GLCanvas のセットアップ
+		GLData data = new GLData();
+		data.majorVersion = 3;
+		data.minorVersion = 3;
+		data.profile = GLData.Profile.CORE;
+
+		// ==========================================================
+		// ★ フリッカー防止のための設定追加
+		// ==========================================================
+		data.doubleBuffer = true; // ★ 必須: paintGL()でswapBuffer()が設定されていること。
+		data.forwardCompatible = true;
+//		data.samples = 4; // ★ 必須: MSAA (マルチサンプル・アンチエイリアシング) を有効化し、線を滑らかにする
+//		data.swapInterval = 1; // ★ 追加: 垂直同期 (VSync) を有効にしてティアリング(描画ズレ)を防ぐ
+		// ==========================================================
+
+		glCanvas = new AneurysmGLCanvas(data);
+		if (volumeData != null) {
+			glCanvas.setVolumeData(volumeData);
+		}
+		glCanvas.setCandidates(candidateList);
+
+		mainVisualPanel.add(glCanvas, BorderLayout.CENTER);
+		splitPane.setLeftComponent(mainVisualPanel);
+
+		// ====================================================================
+		// 2. 右側: サイドバー (判定パネル & チェックリスト)
+		// ====================================================================
+		JPanel sidebarPanel = new JPanel(new BorderLayout());
+		sidebarPanel.setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, Color.DARK_GRAY));
+
+		buildJudgePanel();
+		sidebarPanel.add(judgePanel, BorderLayout.NORTH);
+
+		listContainer = new JPanel();
+		listContainer.setLayout(new BoxLayout(listContainer, BoxLayout.Y_AXIS));
+
+		JScrollPane scrollPane = new JScrollPane(listContainer);
+		scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+		scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
+		sidebarPanel.add(scrollPane, BorderLayout.CENTER);
+
+		// ====================================================================
+		// 3. サイドバー下部: フィルターラジオボタン & 全クリア
+		// ====================================================================
+		JPanel southPanel = new JPanel(new GridBagLayout());
+		southPanel.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Color.LIGHT_GRAY));
+		southPanel.setBackground(Color.WHITE); // 背景を白にしてスッキリさせる
+
+		// ラジオボタンの生成
+		rbSuspectedOnly = new JRadioButton("SUSPECTED only");
+		rbNormalOnly = new JRadioButton("NORMAL only");
+		rbAll = new JRadioButton("All", true); // デフォルトは All を選択
+
+		Font filterFont = new Font("Meiryo", Font.PLAIN, 11);
+		rbSuspectedOnly.setFont(filterFont);
+		rbNormalOnly.setFont(filterFont);
+		rbAll.setFont(filterFont);
+
+		rbSuspectedOnly.setBackground(Color.WHITE);
+		rbNormalOnly.setBackground(Color.WHITE);
+		rbAll.setBackground(Color.WHITE);
+
+		// ボタンのグループ化（一つしか選べないようにする）
+		ButtonGroup filterGroup = new ButtonGroup();
+		filterGroup.add(rbSuspectedOnly);
+		filterGroup.add(rbNormalOnly);
+		filterGroup.add(rbAll);
+
+		// ラジオボタンがクリックされたらリストを再構築するリスナー
+		java.awt.event.ActionListener filterListener = e -> populateCandidates();
+		rbSuspectedOnly.addActionListener(filterListener);
+		rbNormalOnly.addActionListener(filterListener);
+		rbAll.addActionListener(filterListener);
+
+		// GridBagLayoutの設定
+		GridBagConstraints sGbc = new GridBagConstraints();
+		sGbc.fill = GridBagConstraints.HORIZONTAL;
+		sGbc.weighty = 0.0;
+
+		// 1段目: ラジオボタンを等幅で横並びにする
+		sGbc.insets = new Insets(6, 8, 2, 2);
+		sGbc.gridy = 0;
+
+		sGbc.gridx = 0;
+		sGbc.weightx = 0.35;
+		southPanel.add(rbSuspectedOnly, sGbc);
+
+		sGbc.gridx = 1;
+		sGbc.weightx = 0.33;
+		southPanel.add(rbNormalOnly, sGbc);
+
+		sGbc.gridx = 2;
+		sGbc.weightx = 0.32;
+		southPanel.add(rbAll, sGbc);
+
+		// 2段目: Clear All Candidates チェックボックス
+		btnAllNormal = new JCheckBox("Set All to NORMAL");
+		btnAllNormal.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+		btnAllNormal.setBackground(Color.WHITE);
+		btnAllNormal.addActionListener(e -> handleAllNormal());
+
+		sGbc.gridx = 0;
+		sGbc.gridy = 1;
+		sGbc.gridwidth = 3; // 3列分ぶち抜き
+		sGbc.weightx = 1.0;
+		sGbc.insets = new Insets(6, 8, 8, 8); // 余白の調整
+		southPanel.add(btnAllNormal, sGbc);
+
+		sidebarPanel.add(southPanel, BorderLayout.SOUTH);
+
+		splitPane.setRightComponent(sidebarPanel);
+		add(splitPane, BorderLayout.CENTER);
+
+		// データの流し込みと初期化
+		populateCandidates();
+		updateJudgeStatus();
+
+		// Canvasの再描画タイマー（30fps駆動）
+		Timer timer = new Timer(30, e -> {
+			if (glCanvas != null) {
+				glCanvas.render();
+				glCanvas.repaint();
+			}
+		});
+		timer.setRepeats(true);
+		timer.start();
+	}
+
+	private void buildJudgePanel() {
+		judgePanel = new JPanel(new BorderLayout());
+		judgePanel.setPreferredSize(new Dimension(350, 60));
+		judgePanel.setBorder(new EmptyBorder(10, 15, 10, 15));
+
+		judgeLabel = new JLabel("", SwingConstants.CENTER);
+		judgeLabel.setFont(new Font("Meiryo", Font.BOLD, 18));
+		judgePanel.add(judgeLabel, BorderLayout.CENTER);
+	}
+
+	private void populateCandidates() {
+		listContainer.removeAll();
+		itemPanelList.clear();
+
+		for (AneurysmCandidate candidate : candidateList) {
+			// ==========================================================
+			// ★ 選択されたラジオボタンによるフィルタリングロジック
+			// ==========================================================
+			if (rbSuspectedOnly != null && rbSuspectedOnly.isSelected()) {
+				// SUSPECTED only: NORMAL のものはスキップ
+				if (candidate.getType() == CandidateType.NORMAL) {
+					continue;
+				}
+			} else if (rbNormalOnly != null && rbNormalOnly.isSelected()) {
+				// NORMAL only: NORMAL 以外のものはスキップ
+				if (candidate.getType() != CandidateType.NORMAL) {
+					continue;
+				}
+			}
+			// All の場合はスキップせずすべて表示
+
+			CandidateItemPanel itemPanel = new CandidateItemPanel(candidate);
+			listContainer.add(itemPanel);
+			itemPanelList.add(itemPanel);
+		}
+
+		listContainer.add(Box.createVerticalGlue());
+		listContainer.revalidate();
+		listContainer.repaint();
+	}
+
+	
+	/**
+     * すべての検出候補のタイプを一度に NORMAL（正常血管）に一括仕分けします。
      */
-    private void updateMarkersToCanvas() {
-        if (volumeData == null || praparat == null || glCanvas == null) return;
-
-        List<FreeFormRoi3D> roiList = new ArrayList<>();
-
-        // トグルボタンがOFFの場合は、空のリストを渡して既存のROIを消去する
-        if (!btnShowMarkers.isSelected()) {
-            double[] dummyIpp = {0,0,0};
-            double[] dummyIop = {1,0,0, 0,1,0};
-            double[] dummyStepZ = {0,0,1};
-            glCanvas.setRoiData(roiList, dummyIpp, dummyIop, dummyStepZ);
-            return;
-        }
-
-        // 空間のメタデータを取得（GLCanvas.setRoiData に必要）
-        // 最初のSlideGlassから現在のC(チャンネル)とT(タイムフレーム)も取得しておく
-        SlideGlass firstSg = praparat.getAllSlides().get(0);
-        com.vis.dicom.DicomObject header = firstSg.getHeader();
-        int frameIdx = praparat.isMultiFrame() ? header.getInt(com.vis.dicom.Tag.InstanceNumber, 1) - 1 : 0;
-        
-        double[] startIpp = praparat.getSafeIPP(header, frameIdx);
-        double[] iop = praparat.getSafeIOP(header, frameIdx);
-        double spZ = header.getDouble(com.vis.dicom.Tag.SpacingBetweenSlices, header.getDouble(com.vis.dicom.Tag.SliceThickness, 1.0));
-        
-        // nベクトル (Z方向へのステップベクトル) を計算
-        double[] n = new double[3];
-        n[0] = iop[1]*iop[5] - iop[2]*iop[4];
-        n[1] = iop[2]*iop[3] - iop[0]*iop[5];
-        n[2] = iop[0]*iop[4] - iop[1]*iop[3];
-        double[] stepZ = { n[0]*spZ, n[1]*spZ, n[2]*spZ };
-
-        // 現在表示しているボリュームの C と T を取得（スライス特定用）
-        int[] zctArray = praparat.getZCTArray(firstSg);
-        int currentC = zctArray[1];
-        int currentT = zctArray[2];
-
-        // 候補を走査してボクセル化（FreeFormRoi3D の生成）
-        for (AneurysmCandidate c : candidateList) {
-            if (c.isCleared()) continue;
-
-            Point3D p = c.getPeakPoint(); // ボクセル座標 (x, y, z)
+    private void handleAllNormal() {
+        int reply = JOptionPane.showConfirmDialog(this, 
+            "すべての候補の分類を NORMAL (正常血管) に変更しますか？\n(SUSPECTED only フィルター有効時はリストから非表示になります)", 
+            "Bulk Change Confirmation", 
+            JOptionPane.YES_NO_OPTION, 
+            JOptionPane.WARNING_MESSAGE);
             
-            // 半径(mm)
-            double radiusMm = Math.min(5.0, c.getMaxBulgeRatio() * 1.5); 
-
-            // ========================================================
-            // ★ 最も近い SlideGlass (Zスライス) の取得
-            // ========================================================
-            // ボクセル座標の Z (p.z) はそのままスライスインデックスとして利用可能
-            int targetZctIdx = praparat.calcZctIndex(new int[]{p.z, currentC, currentT});
-            SlideGlass targetSg = praparat.getSlideGlassAt(targetZctIdx);
-            
-            // 万が一該当スライスが取得できない場合のフォールバック
-            if (targetSg == null) {
-                targetSg = firstSg;
+        if (reply == JOptionPane.YES_OPTION) {
+            for (AneurysmCandidate c : candidateList) {
+                c.setType(CandidateType.NORMAL);
             }
-
-            // ========================================================
-            // ★ ROIの2Dバウンディングボックス(x, y, width, height)の算出
-            // ========================================================
-            // 半径(mm) を ピクセルサイズで割って画像上のピクセル幅に換算
-            int radiusPxX = (int) Math.round(radiusMm / volumeData.pixelSpacingX);
-            int radiusPxY = (int) Math.round(radiusMm / volumeData.pixelSpacingY);
-            
-            int boxX = p.x - radiusPxX;
-            int boxY = p.y - radiusPxY;
-            int boxWidth = radiusPxX * 2;
-            int boxHeight = radiusPxY * 2;
-
-            // 中心が存在する SlideGlass と 2Dバウンディングボックスを渡してインスタンス化
-            SphereRoi3D sphere = new SphereRoi3D(boxX, boxY, boxWidth, boxHeight, targetSg);
-            
-            // ※補足：もし SphereRoi3D クラスに setRadiusMm(...) や setCenter(...) のような
-            // 物理単位を厳密に上書きするメソッドがあれば、ここで呼び出しておくとより正確です。
-
-            // グループ名で「通常」か「ハイライト」かを分ける
-            String groupName = (c == highlightedCandidate) ? "HighlightMarker" : "NormalMarker";
-            
-            // SphereRoi3D をボクセル化して FreeFormRoi3D のマスクを作成
-            FreeFormRoi3D maskRoi = FreeFormRoi3D.createFromSphere(praparat, sphere, groupName);
-            
-            // 色の設定
-            if (c == highlightedCandidate) {
-                maskRoi.setStrokeColor(Color.YELLOW); // ハイライトは黄色
-            } else {
-                maskRoi.setStrokeColor(Color.RED);    // 通常は赤
-            }
-
-            roiList.add(maskRoi);
+            populateCandidates(); // ラジオボタンのフィルター条件に従ってリストを再描画
+            updateJudgeStatus();  // 判定ステータスとボタンの有効状態を更新
         }
-
-        // GLCanvasにROIデータを流し込む（非同期でマスクがGPUへ転送される）
-        glCanvas.setRoiData(roiList, startIpp, iop, stepZ);
     }
 
+    /**
+     * NORMAL 以外の「要疑い」の数をカウントし、上部パネルの警告状態を更新します。
+     */
     public void updateJudgeStatus() {
-        int unclearedCount = 0;
+        int suspectCount = 0;
         for (AneurysmCandidate c : candidateList) {
-            if (!c.isCleared()) {
-                unclearedCount++;
+            // NORMAL 以外のタイプ（SACCULAR, BIFURCATION等）をカウント
+            if (c.getType() != CandidateType.NORMAL) {
+                suspectCount++;
             }
         }
 
-        if (unclearedCount > 0) {
+        if (suspectCount > 0) {
             judgePanel.setBackground(new Color(255, 220, 220));
-            judgeLabel.setText("⚠ Suspected Cerebral Aneurysm (" + unclearedCount + " uncleared)");
+            judgeLabel.setText("⚠ Suspected Cerebral Aneurysm (" + suspectCount + " suspected)");
             judgeLabel.setForeground(new Color(180, 0, 0));
+            if (btnAllNormal != null) btnAllNormal.setEnabled(true);
         } else {
             judgePanel.setBackground(new Color(220, 245, 220));
-            judgeLabel.setText("✔ No Findings (All Cleared)");
+            judgeLabel.setText("✔ No Findings (All Cleared to NORMAL)");
             judgeLabel.setForeground(new Color(0, 120, 0));
+            if (btnAllNormal != null) btnAllNormal.setEnabled(false); // 全てNORMALならボタンを無効化
         }
         
-        allClearCheckBox.setSelected(unclearedCount == 0);
-        glCanvas.repaint(); // Clear状態がCanvas(マーカー描画)にも反映されるように再描画
+        if (glCanvas != null) glCanvas.repaint();
     }
 
-    private void handleAllClear(boolean selectAll) {
-        for (CandidateItemPanel itemPanel : itemPanelList) {
-            itemPanel.setClearStatus(selectAll);
-        }
-        updateJudgeStatus();
-    }
+	/**
+	 * 抽出された VesselTree の中心線を解析し、Bulge Ratio に応じて色付けした 描画用の頂点配列を生成して Canvas に渡します。
+	 */
+	public void loadSkeletonColorMap(com.vis.aneurysmdetector.core.VesselTree tree) {
+		if (tree == null)
+			return;
 
-    // ========================================================================
-    // 動脈瘤候補チェックパネル
-    // ========================================================================
-    @SuppressWarnings("serial")
+		// 頂点リスト: (X, Y, Z, R, G, B, A) を1頂点とする。線分なので2頂点で1セット。
+		java.util.List<Float> vertices = new java.util.ArrayList<>();
+
+		for (com.vis.aneurysmdetector.core.Branch branch : tree.getBranches()) {
+			java.util.List<Point3D> nodes = branch.getPath();
+			List<Double> BulgeRatios = branch.getBulgeRatios();
+
+			if (nodes.size() < 2)
+				continue;
+
+			for (int i = 0; i < nodes.size() - 1; i++) {
+				Point3D n1 = nodes.get(i);
+				Point3D n2 = nodes.get(i + 1);
+
+				// 頂点1
+				vertices.add((float) n1.x);
+				vertices.add((float) n1.y);
+				vertices.add((float) n1.z);
+				float[] color1 = getBulgeColor(BulgeRatios.get(i));
+				vertices.add(color1[0]);
+				vertices.add(color1[1]);
+				vertices.add(color1[2]);
+				vertices.add(color1[3]);
+
+				// 頂点2
+				vertices.add((float) n2.x);
+				vertices.add((float) n2.y);
+				vertices.add((float) n2.z);
+				float[] color2 = getBulgeColor(BulgeRatios.get(i + 1));
+				vertices.add(color2[0]);
+				vertices.add(color2[1]);
+				vertices.add(color2[2]);
+				vertices.add(color2[3]);
+			}
+		}
+
+		// float[] に変換
+		float[] vArray = new float[vertices.size()];
+		for (int i = 0; i < vertices.size(); i++) {
+			vArray[i] = vertices.get(i);
+		}
+
+		glCanvas.setSkeletonData(vArray);
+	}
+
+	/**
+	 * Bulge Ratio に応じてカラーマップ（青 ➡ 緑 ➡ 黄 ➡ 赤）を生成します。
+	 */
+	private float[] getBulgeColor(double bulge) {
+		// 正常血管 (1.0) は青色、異常 (1.35以上) は赤色になるようにグラデーション
+		double norm = (bulge - 1.0) / (1.5 - 1.0);
+		norm = Math.max(0.0, Math.min(norm, 1.0)); // 0.0 ~ 1.0 にクランプ
+
+		// HSL色空間からRGBへの簡易変換 (青=240度, 赤=0度)
+		float hue = (float) ((1.0 - norm) * 240.0 / 360.0);
+		int rgb = Color.HSBtoRGB(hue, 1.0f, 1.0f);
+		Color c = new Color(rgb);
+
+		return new float[] { c.getRed() / 255.0f, c.getGreen() / 255.0f, c.getBlue() / 255.0f, 1.0f // Alpha
+		};
+	}
+
+	// ========================================================================
+	// 動脈瘤候補チェックパネル
+	// ========================================================================
 	private class CandidateItemPanel extends JPanel {
-        private final AneurysmCandidate candidate;
-        private final JCheckBox clearCheckBox;
-        private boolean isSelected = false;
+		private final AneurysmCandidate candidate;
+		private boolean isSelected = false;
+		public CandidateItemPanel(AneurysmCandidate c) {
+			this.candidate = c;
 
-        public CandidateItemPanel(AneurysmCandidate c) {
-            this.candidate = c;
-            
-            setLayout(new GridBagLayout());
-            setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createMatteBorder(0, 0, 1, 0, Color.LIGHT_GRAY),
-                    new EmptyBorder(8, 8, 8, 8)
-            ));
-            setBackground(Color.WHITE);
+			setLayout(new GridBagLayout());
+			setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, Color.LIGHT_GRAY),
+					new EmptyBorder(8, 8, 8, 8)));
+			setBackground(Color.WHITE);
 
-            GridBagConstraints gbc = new GridBagConstraints();
-            gbc.fill = GridBagConstraints.BOTH;
+			GridBagConstraints gbc = new GridBagConstraints();
+			gbc.fill = GridBagConstraints.BOTH;
 
-            // 1. 左側: Mini 3D Box (プレースホルダー)
-            JPanel mini3DPlaceholder = new JPanel(new BorderLayout());
-            mini3DPlaceholder.setBackground(Color.BLACK);
-            mini3DPlaceholder.setPreferredSize(new Dimension(70, 70));
-            JLabel miniLabel = new JLabel("Mini3D", SwingConstants.CENTER);
-            miniLabel.setFont(new Font("Arial", Font.PLAIN, 10));
-            miniLabel.setForeground(Color.DARK_GRAY);
-            mini3DPlaceholder.add(miniLabel, BorderLayout.CENTER);
+			// ==========================================================
+			// ★修正: 1. 左側: 動脈瘤周辺の2Dスライス・サムネイルの自動生成
+			// ==========================================================
+			JPanel mini3DPlaceholder = new JPanel(new BorderLayout());
+			mini3DPlaceholder.setBackground(Color.BLACK);
+			mini3DPlaceholder.setPreferredSize(new Dimension(70, 70));
 
-            gbc.gridx = 0; gbc.gridy = 0;
-            gbc.gridwidth = 1; gbc.gridheight = 2;
-            gbc.weightx = 0.0; gbc.weighty = 1.0;
-            gbc.insets = new Insets(0, 0, 0, 10);
-            add(mini3DPlaceholder, gbc);
+			JLabel thumbnailLabel = new JLabel("No Image", SwingConstants.CENTER);
+			thumbnailLabel.setForeground(Color.DARK_GRAY);
 
-            // 2. 中央: パラメータ群
-            JLabel scoreLabel = new JLabel(String.format("Score: %.1f", c.getScore()));
-            scoreLabel.setFont(new Font("Meiryo", Font.BOLD, 13));
-            scoreLabel.setForeground(c.getScore() > 70 ? Color.RED : Color.DARK_GRAY);
+			// サムネイル画像の抽出ロジック
+			if (praparat != null) {
+				try {
+					Point3D p = c.getPeakPoint();
+					SlideGlass firstSg = praparat.getAllSlides().get(0);
+					int[] zct = praparat.getZCTArray(firstSg);
 
-            JLabel typeLabel = new JLabel("[" + c.getType() + "]");
-            typeLabel.setFont(new Font("Meiryo", Font.ITALIC, 12));
-            
-            Point3D p = c.getPeakPoint();
-            JLabel coordLabel = new JLabel(String.format("Pos: (%d, %d, %d)", p.x, p.y, p.z));
-            coordLabel.setFont(new Font("Arial", Font.PLAIN, 11));
+					// 動脈瘤が存在するZスライスの SlideGlass を取得
+					int targetIdx = praparat.calcZctIndex(new int[] { p.z, zct[1], zct[2] });
+					SlideGlass sg = praparat.getSlideGlassAt(targetIdx);
 
-            gbc.gridx = 1; gbc.gridy = 0;
-            gbc.gridheight = 1;
-            gbc.weightx = 0.3; gbc.weighty = 0.5;
-            gbc.insets = new Insets(0, 0, 2, 5);
-            add(scoreLabel, gbc);
+					if (sg != null && sg.getOriginalImage() != null) {
+						// ImageJ のプロセッサを取得
+						ij.process.ImageProcessor ip = sg.getOriginalImage().getProcessor().duplicate();
 
-            gbc.gridx = 2; gbc.weightx = 0.3;
-            add(typeLabel, gbc);
+						// コントラストを自動調整（見やすくするため）
+						ip.resetMinAndMax();
 
-            gbc.gridx = 3; gbc.weightx = 0.4;
-            add(coordLabel, gbc);
+						// 動脈瘤の中心(p.x, p.y) の周囲 80x80 ピクセルを切り抜く
+						int cropSize = 80;
+						int cx = Math.max(0, p.x - cropSize / 2);
+						int cy = Math.max(0, p.y - cropSize / 2);
+						ip.setRoi(cx, cy, cropSize, cropSize);
+						ij.process.ImageProcessor croppedIp = ip.crop();
 
-            JLabel bulgeLabel = new JLabel(String.format("Bulge Ratio: %.2f", c.getMaxBulgeRatio()));
-            bulgeLabel.setFont(new Font("Meiryo", Font.PLAIN, 11));
-            bulgeLabel.setForeground(Color.GRAY);
+						// 70x70 のサイズに縮小して ImageIcon に変換
+						Image img = croppedIp.getBufferedImage().getScaledInstance(70, 70, Image.SCALE_SMOOTH);
+						thumbnailLabel = new JLabel(new ImageIcon(img));
+					}
+				} catch (Exception ex) {
+					com.vis.core.log.Log.logger.warning("サムネイル生成失敗: " + ex.getMessage());
+				}
+			}
 
-            JLabel siLabel = new JLabel(String.format("Shape Index: %.2f", c.getMaxShapeIndex()));
-            siLabel.setFont(new Font("Meiryo", Font.PLAIN, 11));
-            siLabel.setForeground(Color.GRAY);
+			mini3DPlaceholder.add(thumbnailLabel, BorderLayout.CENTER);
 
-            gbc.gridx = 1; gbc.gridy = 1;
-            gbc.weightx = 0.3; gbc.weighty = 0.5;
-            gbc.insets = new Insets(2, 0, 0, 5);
-            add(bulgeLabel, gbc);
+			gbc.gridx = 0;
+			gbc.gridy = 0;
+			gbc.gridwidth = 1;
+			gbc.gridheight = 2;
+			gbc.weightx = 0.0;
+			gbc.weighty = 1.0;
+			gbc.insets = new Insets(0, 0, 0, 10);
+			add(mini3DPlaceholder, gbc);
 
-            gbc.gridx = 2; gbc.gridwidth = 2; gbc.weightx = 0.7;
-            add(siLabel, gbc);
+			// ==========================================================
+			// 2. 中央: パラメータ群 (編集機能付き)
+			// ==========================================================
+			JLabel scoreLabel = new JLabel(String.format("Score: %.1f", c.getScore()));
+			scoreLabel.setFont(new Font("Meiryo", Font.BOLD, 13));
+			scoreLabel.setForeground(c.getScore() > 70 ? Color.RED : Color.DARK_GRAY);
 
-            // 3. 右側: Clear チェックボックス
-            clearCheckBox = new JCheckBox("Clear");
-            clearCheckBox.setFont(new Font("Meiryo", Font.PLAIN, 11));
-            clearCheckBox.setBackground(Color.WHITE);
-            clearCheckBox.setSelected(c.isCleared());
-            clearCheckBox.addActionListener(e -> {
-                candidate.setCleared(clearCheckBox.isSelected());
-                updateJudgeStatus();
-            });
+			// ★ 修正: 単なるラベルから、列挙型(CandidateType)のプルダウンメニューに変更！
+			JComboBox<CandidateType> typeCombo = new JComboBox<>(CandidateType.values());
+			typeCombo.setSelectedItem(c.getType());
+			typeCombo.setFont(new Font("Meiryo", Font.PLAIN, 11));
+			typeCombo.setBackground(Color.WHITE);
+			// 値が変更されたら、Candidateオブジェクト本体を更新する
+			typeCombo.addActionListener(e -> {
+				CandidateType selectedType = (CandidateType) typeCombo.getSelectedItem();
+				c.setType(selectedType);
+				com.vis.core.log.Log.logger.info("Changed type to: " + selectedType);
+				populateCandidates();
+				updateJudgeStatus();
+			});
 
-            gbc.gridx = 4; gbc.gridy = 0;
-            gbc.gridwidth = 1; gbc.gridheight = 2;
-            gbc.weightx = 0.0; gbc.weighty = 1.0;
-            gbc.insets = new Insets(0, 5, 0, 0);
-            add(clearCheckBox, gbc);
+			Point3D p = c.getPeakPoint();
+			JLabel coordLabel = new JLabel(String.format("Pos: (%d, %d, %d)", p.x, p.y, p.z));
+			coordLabel.setFont(new Font("Arial", Font.PLAIN, 11));
 
-            // 4. マウスイベント（キャンバスへのハイライト通知）
-            addMouseListener(new MouseAdapter() {
-                @Override
-                public void mousePressed(MouseEvent e) { highlightThisPanel(); }
-            });
-            clearCheckBox.addMouseListener(new MouseAdapter() {
-                @Override
-                public void mousePressed(MouseEvent e) { highlightThisPanel(); }
-            });
-        }
+			gbc.gridx = 1;
+			gbc.gridy = 0;
+			gbc.gridheight = 1;
+			gbc.weightx = 0.3;
+			gbc.weighty = 0.5;
+			gbc.insets = new Insets(0, 0, 2, 5);
+			add(scoreLabel, gbc);
 
-        public void setClearStatus(boolean cleared) {
-            clearCheckBox.setSelected(cleared);
-            candidate.setCleared(cleared);
-        }
+			gbc.gridx = 2;
+			gbc.weightx = 0.3;
+			add(typeCombo, gbc); // ラベルの代わりにコンボボックスを追加
 
-        private void highlightThisPanel() {
+			gbc.gridx = 3;
+			gbc.weightx = 0.4;
+			add(coordLabel, gbc);
+
+			JLabel bulgeLabel = new JLabel(String.format("Bulge Ratio: %.2f", c.getMaxBulgeRatio()));
+			bulgeLabel.setFont(new Font("Meiryo", Font.PLAIN, 11));
+			bulgeLabel.setForeground(Color.GRAY);
+
+			JLabel siLabel = new JLabel(String.format("Shape Index: %.2f", c.getMaxShapeIndex()));
+			siLabel.setFont(new Font("Meiryo", Font.PLAIN, 11));
+			siLabel.setForeground(Color.GRAY);
+
+			gbc.gridx = 1;
+			gbc.gridy = 1;
+			gbc.weightx = 0.3;
+			gbc.weighty = 0.5;
+			gbc.insets = new Insets(2, 0, 0, 5);
+			add(bulgeLabel, gbc);
+
+			gbc.gridx = 2;
+			gbc.weightx = 0.4;
+			add(siLabel, gbc);
+
+			// ★ 追加: Saliency計算の詳細値を見るための「Details」ボタン
+			JButton detailsBtn = new JButton("詳細(Details)");
+			detailsBtn.setFont(new Font("Meiryo", Font.PLAIN, 10));
+			detailsBtn.setMargin(new Insets(2, 5, 2, 5));
+			detailsBtn.addActionListener(e -> showDetailsDialog(c));
+
+			gbc.gridx = 3;
+			gbc.weightx = 0.3;
+			add(detailsBtn, gbc);
+
+			// 4. マウスイベント（キャンバスへのハイライト通知）
+			addMouseListener(new MouseAdapter() {
+				@Override
+				public void mousePressed(MouseEvent e) {
+					highlightThisPanel();
+				}
+			});
+		}
+
+		private void highlightThisPanel() {
             for (CandidateItemPanel panel : itemPanelList) {
                 panel.setSelected(false);
             }
@@ -428,59 +652,162 @@ public class AneurysmDetectorUI extends JFrame {
             // ハイライト対象を更新
             highlightedCandidate = candidate;
             
-            // 対象が変わったのでマーカーの色を更新するために再計算
-            updateMarkersToCanvas();
+            // オートフォーカス実行！
+            glCanvas.focusOn(candidate.getPeakPoint());
             
-            // TODO: 余力があれば、ここで glCanvas.camera.LookAt(...) などを呼び出して
-            // カメラを対象の座標にズームさせると完璧です。
-        }
-
-        public void setSelected(boolean selected) {
-            this.isSelected = selected;
-            if (selected) {
-                setBackground(new Color(230, 240, 255));
-                clearCheckBox.setBackground(new Color(230, 240, 255));
-            } else {
-                setBackground(Color.WHITE);
-                clearCheckBox.setBackground(Color.WHITE);
+            // ==========================================================
+            // ★ 追加: キャンバスに「いま選択された候補」を教え、再描画を要求する
+            // ==========================================================
+            if (glCanvas != null) {
+                glCanvas.setHighlightedCandidate(candidate);
+                glCanvas.repaint();
             }
-            repaint();
         }
-    }
 
-    // ========================================================================
-    // UI テスト起動 (VolumeData に null を渡してUI骨組みだけを起動可能)
-    // ========================================================================
-    public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> {
-            // ダミーの検出候補リストを作成
-            List<AneurysmCandidate> dummyCandidates = new ArrayList<>();
+		/**
+         * 候補の各種計算パラメーターを一覧表示するダイアログ
+         */
+        private void showDetailsDialog(AneurysmCandidate c) {
+            Point3D p = c.getPeakPoint();
             
-            // 1. テストデータ1: 非常に危険な側壁瘤（高スコア）
-            AneurysmCandidate c1 = new AneurysmCandidate(null);
-            c1.addPoint(new Point3D(250, 133, 39), 5.2, 0.98, 0.15);
-            c1.setScore(98.5); 
-            c1.setType(CandidateType.SACCULAR);
-            dummyCandidates.add(c1);
+            // ==========================================================
+            // ★ 修正: 未実装のパラメータには必ず「数値 (double)」の 0.0 を入れる
+            // ==========================================================
+            double gaussianCurv = 0.0; 
+            double radiusMm = 0.0;
+            double volumeMm3 = 0.0;
+            
+            // ※もし後日 AneurysmCandidate にゲッターを追加した場合は、以下のコメントアウトを外してください。
+            // gaussianCurv = c.getGaussianCurvature();
+            // radiusMm = c.getRadiusMm();
+            // volumeMm3 = c.getVolumeMm3();
 
-            // 2. テストデータ2: リスク中程度の分岐部動脈瘤（中スコア）
-            AneurysmCandidate c2 = new AneurysmCandidate(null);
-            c2.addPoint(new Point3D(148, 253, 39), 2.1, 0.76, 0.05);
-            c2.setScore(65.4); 
-            c2.setType(CandidateType.BIFURCATION);
-            dummyCandidates.add(c2);
+            String details = String.format(
+                "=== Aneurysm Candidate Details ===\n\n" +
+                "Voxel Position : (X: %d, Y: %d, Z: %d)\n" +
+                "Saliency Score : %.2f / 100\n" +
+                "Current Type   : %s\n\n" +
+                "--- Morphological Features ---\n" +
+                "Max Bulge Ratio : %.3f (Threshold: 1.35)\n" +
+                "Max Shape Index : %.3f (Sphere: 1.0, Tube: 0.5)\n" +
+                "Gaussian Curv.  : %.4f\n" +
+                "Vessel Radius   : %.2f mm\n" +
+                "Volume Est.     : %.2f mm³\n\n" +
+                "Status: %s",
+                p.x, p.y, p.z,
+                c.getScore(),
+                c.getType(),
+                c.getMaxBulgeRatio(),
+                c.getMaxShapeIndex(),
+                gaussianCurv, // %.4f に対応（必ず double を渡す）
+                radiusMm,     // %.2f に対応（必ず double を渡す）
+                volumeMm3,    // %.2f に対応（必ず double を渡す）
+                // ★修正: isCleared() ではなく、Type が NORMAL かどうかで Status を判定する
+                c.getType() == CandidateType.NORMAL ? "Cleared (NORMAL)" : "Active (Suspected)"
+            );
 
-            // 3. テストデータ3: 正常血管の急カーブによるノイズ（低スコア）
-            AneurysmCandidate c3 = new AneurysmCandidate(null);
-            c3.addPoint(new Point3D(330, 220, 64), 1.38, 0.66, 0.01);
-            c3.setScore(18.2); 
-            c3.setType(CandidateType.UNKNOWN);
-            dummyCandidates.add(c3);
+            JOptionPane.showMessageDialog(
+                this, 
+                details, 
+                "Candidate Features", 
+                JOptionPane.INFORMATION_MESSAGE
+            );
+        }
 
-            // ★ 修正ポイント: 引数を最新の (candidates, volumeData, praparat) の3つに合わせる
-            // 画像データがない単体起動時は、後ろの2つに null を渡すことで安全にUIのガワだけをテストできます
-            AneurysmDetectorUI ui = new AneurysmDetectorUI(dummyCandidates, null, null);
-            ui.setVisible(true);
-        });
-    }
+		public void setSelected(boolean selected) {
+			this.isSelected = selected;
+			if (selected) {
+				setBackground(new Color(230, 240, 255));
+			} else {
+				setBackground(Color.WHITE);
+			}
+			repaint();
+		}
+		
+		@SuppressWarnings("unused")
+		public boolean isSelected() {
+			return isSelected;
+		}
+	}
+
+	// ========================================================================
+	// UI テスト起動 (VolumeData に null を渡してUI骨組みだけを起動可能)
+	// ========================================================================
+	public static void main(String[] args) {
+		SwingUtilities.invokeLater(() -> {
+			String path = "./test-mra/";
+			ij.ImagePlus rawImp = FolderOpener.open(path);
+			Praparat pp = new Praparat(rawImp, null, ViewMode.SingleGrid, true);
+
+			System.out.println("Loading image from: " + path);
+			if (rawImp == null) {
+				System.err.println("Failed to load image.");
+				return;
+			}
+			Image3D rawImage = new Image3D(rawImp);
+
+			// ==============================================================
+			// Phase 1 & 2: Preprocessing
+			// ==============================================================
+			System.out.println("\n--- Phase 1 & 2: Preprocessing ---");
+			DenoiseFilter denoiser = new DenoiseFilter(15, 1);
+			Image3D denoisedImage = denoiser.apply(rawImage);
+
+			JermanFilter3D jermanFilter = new JermanFilter3D();
+			double[] sigmas = { 1.0, 2.0, 3.0 };
+			Image3D jermanImage = jermanFilter.apply(denoisedImage, sigmas);
+
+			VesselSegmenter segmenter = new VesselSegmenter();
+			Image3D segmentedMask = segmenter.segment(jermanImage);
+
+			Skeletonizer skeletonizer = new Skeletonizer();
+			Image3D skeletonImage = skeletonizer.skeletonize(segmentedMask);
+
+			// ==============================================================
+			// Phase 3: Graph Construction & Optimization
+			// ==============================================================
+			System.out.println("\n--- Phase 3: Graph Construction & Optimization ---");
+			TreeGraphBuilder builder = new TreeGraphBuilder();
+			VesselTree tree = builder.build(skeletonImage);
+
+			GraphPruner pruner = new GraphPruner();
+			pruner.prune(tree, 3.0);
+			pruner.mergeLinearBranches(tree);
+			tree.printStatistics();
+
+			// ==============================================================
+			// Phase 4: Feature Extraction & Detection
+			// ==============================================================
+			System.out.println("\n--- Phase 4: Feature Extraction & Detection ---");
+
+			// 1. 距離マップの生成
+			DistanceTransform3D dt3D = new DistanceTransform3D();
+			Image3D distanceMap = dt3D.computeDistanceMap(segmentedMask);
+
+			// 2. 特徴量の抽出 (Radius, Bulge Ratio, Shape Index, Gaussian Curvature)
+			FeatureExtractor extractor = new FeatureExtractor();
+			extractor.extractInscribedRadii(tree, distanceMap);
+			extractor.extractBulgeRatiosAndCurvatures(tree, segmentedMask);
+
+			// 3. 動脈瘤の検出 (閾値: Bulge>=1.35, SI>=0.65, K>0)
+			AneurysmDetector detector = new AneurysmDetector(1.35, 0.65, 0.0);
+			List<AneurysmCandidate> candidates = detector.detect(tree);
+
+			// ==============================================================
+			// 最終結果の出力
+			// ==============================================================
+			System.out.println("\n--- Final Detection Results ---");
+			if (candidates.isEmpty()) {
+				System.out.println("No aneurysms detected.");
+			} else {
+				for (int i = 0; i < candidates.size(); i++) {
+					System.out.println("Candidate #" + (i + 1) + ": " + candidates.get(i).toString());
+				}
+			}
+			VolumeData vd = VolumeLoader.loadDicom(rawImp);
+			AneurysmDetectorUI ui = new AneurysmDetectorUI(candidates, vd, pp, true);
+			ui.loadSkeletonColorMap(tree);
+			ui.setVisible(true);
+		});
+	}
 }

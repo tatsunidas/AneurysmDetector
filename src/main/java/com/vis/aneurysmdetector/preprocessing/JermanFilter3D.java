@@ -1,3 +1,6 @@
+/**
+ * copyright visionary imaging services, inc.
+ */
 package com.vis.aneurysmdetector.preprocessing;
 
 import com.vis.aneurysmdetector.core.Image3D;
@@ -10,6 +13,8 @@ import ij.plugin.GaussianBlur3D;
 /**
  * 3D Jerman Vesselness Filter (血管強調フィルタ)
  * 論文(Jerman et al., 2016)に忠実な Tau正則化(lambda_rho) と条件分岐を適用した厳密実装版。
+ * 
+ * @author tatsunidas
  */
 public class JermanFilter3D {
 

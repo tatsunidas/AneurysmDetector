@@ -1,3 +1,6 @@
+/**
+ * copyright visionary imaging services, inc.
+ */
 package com.vis.aneurysmdetector.preprocessing;
 
 import com.vis.aneurysmdetector.core.Image3D;
@@ -10,6 +13,8 @@ import ij.process.ImageProcessor;
  * 3D White Top-Hat 変換フィルタークラス。
  * 主にCT（CTA）画像において、血管に隣接する巨大な高輝度組織（頭蓋骨など）を除去するために使用します。
  * 処理内容: 元画像 - オープニング画像 (収縮後に膨張させた画像)
+ * 
+ * @author tatsunidas
  */
 public class WhiteTopHat3D {
 

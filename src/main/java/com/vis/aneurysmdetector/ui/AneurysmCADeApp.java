@@ -66,6 +66,11 @@ public class AneurysmCADeApp implements ToolbarPlugIn{
         });
     }
     
+    /**
+     * for plugin
+     */
+    public AneurysmCADeApp() {}
+    
     public AneurysmCADeApp(String imageDir, boolean isStandalone) {
     	startAnalysis(imageDir, isStandalone);
     }

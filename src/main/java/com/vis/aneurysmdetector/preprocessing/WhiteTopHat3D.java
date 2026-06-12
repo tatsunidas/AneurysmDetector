@@ -21,7 +21,7 @@ public class WhiteTopHat3D {
     /**
      * 入力画像に対して3D空間でのWhite Top-Hat変換を適用します。
      * @param input 入力3D-CT画像
-     * @param radius 骨を除去するための構造要素（球体）の半径（ピクセル単位、推奨: 10〜15）
+     * @param radius 骨を除去するための構造要素（球体）の半径（ピクセル単位、推奨: 3~7）
      * 血管の最大直径よりも大きく、骨の厚みよりも小さいサイズに設定します。
      * @return 骨領域が除去され、血管構造が孤立したImage3D
      */

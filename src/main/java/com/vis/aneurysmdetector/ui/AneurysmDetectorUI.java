@@ -1,11 +1,24 @@
+/**
+ * copyright visionary imaging services, inc.
+ */
 package com.vis.aneurysmdetector.ui;
+
+import com.vis.core.view.D2.ui.SeriesWindow;
+import com.vis.core.view.D2.ui.glasses.Praparat.ViewMode;
+import com.vis.core.view.D3.ui.VolumeData;
 
 import com.vis.aneurysmdetector.core.AneurysmCandidate;
 import com.vis.aneurysmdetector.core.CandidateType;
 import com.vis.aneurysmdetector.core.Point3D;
-import com.vis.core.view.D2.ui.glasses.Praparat;
-import com.vis.core.view.D2.ui.glasses.SlideGlass;
-import com.vis.core.view.D3.ui.VolumeData;
+import com.vis.aneurysmdetector.anatomy.GraphPruner;
+import com.vis.aneurysmdetector.feature.FeatureExtractor;
+import com.vis.aneurysmdetector.detection.AneurysmDetector;
+import com.vis.aneurysmdetector.detection.SaliencyScorer;
+import com.vis.aneurysmdetector.core.Image3D;
+import com.vis.aneurysmdetector.core.VesselTree;
+import com.vis.core.view.D3.ui.VolumeLoader;
+
+import ij.ImagePlus;
 
 import org.lwjgl.opengl.awt.GLData;
 
@@ -17,12 +30,12 @@ import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * @author tatsunidas
+ */
 @SuppressWarnings("serial")
 public class AneurysmDetectorUI extends JFrame {
 	
-	// ★ 追加: 単体起動フラグ (trueならアプリ全体を終了、falseならこの画面だけを閉じる)
-    private final boolean isStandalone;
-
 	private JPanel mainVisualPanel;
 	private AneurysmGLCanvas glCanvas; // ★追加: カスタムGLCanvas
 
@@ -39,16 +52,19 @@ public class AneurysmDetectorUI extends JFrame {
 	private List<AneurysmCandidate> candidateList;
 	private List<CandidateItemPanel> itemPanelList;
 
-	private Praparat praparat;
-
+	private ImagePlus rawImp;
+	private ImagePlus nlmResultImp;
+	private ImagePlus jermanImp;
+	private Image3D vesselMask;
+	private Image3D distanceMap;
+	private VesselTree vesselTree;
+	
 	AneurysmCandidate highlightedCandidate;
 
-	public AneurysmDetectorUI(List<AneurysmCandidate> candidates, VolumeData volumeData, Praparat praparat, boolean isStandalone) {
+	public AneurysmDetectorUI(List<AneurysmCandidate> candidates, VolumeData volumeData, ImagePlus rawImp, boolean isStandalone) {
 		this.candidateList = candidates;
-		this.praparat = praparat;
+		this.rawImp = rawImp;
 		
-		this.isStandalone = isStandalone; // ★ フラグを保存
-
 		this.itemPanelList = new ArrayList<>();
 
 		setTitle("Cerebral Aneurysm Computer-Aided Detection (CADe) Workstation");
@@ -92,7 +108,7 @@ public class AneurysmDetectorUI extends JFrame {
 
 				// 2. AneurysmCADeApp の解析パイプラインに新しいフォルダのパスを渡して呼び出す
 				// (プログレスダイアログが自動で立ち上がり、終わると新しいUIが開きます)
-				AneurysmCADeApp.startAnalysis(selectedFolder.getAbsolutePath(), isStandalone);
+				AneurysmCADeApp.startAnalysis(selectedFolder.getAbsolutePath());
 			}
         });
         fileMenu.add(openItem);
@@ -117,8 +133,46 @@ public class AneurysmDetectorUI extends JFrame {
         // --- 2. Process メニュー ---
         JMenu processMenu = new JMenu("Process");
         
-        JMenuItem runDetectionItem = new JMenuItem("🚀 Run Pipeline");
-        processMenu.add(runDetectionItem);
+		// ==========================================================
+		// ★ 追加: NLM結果表示用メニューアイテム
+		// ==========================================================
+		JMenuItem showNlmItem = new JMenuItem(" Show Non-Local Means Results...");
+		showNlmItem.addActionListener(e -> {
+			if (this.nlmResultImp != null) {
+				// ※ ここは実際の SeriesViewer の仕様に合わせて調整してください
+				new SeriesWindow(this.nlmResultImp, null, ViewMode.Normal);
+			} else {
+				JOptionPane.showMessageDialog(this, "NLM結果の画像データが保持されていません。", "Data Not Found",
+						JOptionPane.WARNING_MESSAGE);
+			}
+		});
+        processMenu.add(showNlmItem);
+        
+        JMenuItem showJermanItem = new JMenuItem(" Show Jerman Filter Results...");
+		showJermanItem.addActionListener(e -> {
+			if (this.jermanImp != null) {
+				// ※ ここは実際の SeriesViewer の仕様に合わせて調整してください
+				new SeriesWindow(this.jermanImp, null, ViewMode.Normal);
+			} else {
+				JOptionPane.showMessageDialog(this, "Jerman filter結果の画像データが保持されていません。", "Data Not Found",
+						JOptionPane.WARNING_MESSAGE);
+			}
+		});
+        processMenu.add(showJermanItem);
+        
+		// ==========================================================
+		// ★ 修正: パラメータ調整ダイアログと再計算ロジックの実装
+		// ==========================================================
+		JMenuItem runDetectionItem = new JMenuItem("🚀 Run Pipeline");
+		runDetectionItem.addActionListener(e -> {
+			if (this.jermanImp == null) {
+				JOptionPane.showMessageDialog(this, "Jermanフィルタの結果がありません。最初から解析を実行してください。", "Error",
+						JOptionPane.ERROR_MESSAGE);
+				return;
+			}
+			showParameterDialogAndRun();
+		});
+		processMenu.add(runDetectionItem);
 
         processMenu.addSeparator(); // 区切り線
 
@@ -309,11 +363,17 @@ public class AneurysmDetectorUI extends JFrame {
 		populateCandidates();
 		updateJudgeStatus();
 
-		// Canvasの再描画タイマー（30fps駆動）
+		// ==========================================================
+		// ★ 修正: Canvasの再描画タイマー（ウィンドウ破棄時の安全停止付き）
+		// ==========================================================
 		Timer timer = new Timer(30, e -> {
-			if (glCanvas != null) {
+			// キャンバスが存在し、かつ画面上に表示可能な状態(破棄されていない)かチェック
+			if (glCanvas != null && glCanvas.isDisplayable()) {
 				glCanvas.render();
 				glCanvas.repaint();
+			} else {
+				// ウィンドウが閉じられてキャンバスが破棄されたら、このタイマー自体を安全に停止させる
+				((Timer) e.getSource()).stop();
 			}
 		});
 		timer.setRepeats(true);
@@ -476,6 +536,201 @@ public class AneurysmDetectorUI extends JFrame {
 		return new float[] { c.getRed() / 255.0f, c.getGreen() / 255.0f, c.getBlue() / 255.0f, 1.0f // Alpha
 		};
 	}
+	
+	public void setNLMResults(ImagePlus nlmResultImp) {
+		this.nlmResultImp = nlmResultImp;
+	}
+	
+    public void setJermanResults(ImagePlus jermanImp) {
+    	this.jermanImp = jermanImp;
+    }
+    
+    public void setVesselMaskResults(Image3D vesselMask) {
+    	this.vesselMask = vesselMask;
+    }
+    
+    public void setDistanceMapResults(Image3D distanceMap) {
+    	this.distanceMap = distanceMap;
+    }
+    
+    public void setVesselTreeResults(VesselTree vesselTree) {
+    	this.vesselTree = vesselTree;
+    }
+    
+    /**
+     * パラメータ入力ダイアログを表示し、Jerman画像からパイプラインを再実行する
+     */
+    private void showParameterDialogAndRun() {
+        JDialog dialog = new JDialog(this, "Adjust Detection Parameters", true);
+        dialog.setLayout(new BorderLayout());
+        
+        JPanel formPanel = new JPanel(new GridBagLayout());
+        formPanel.setBorder(new EmptyBorder(15, 15, 15, 15));
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(5, 5, 5, 5);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        
+		// --- パラメータ入力フィールドの作成 (SpinnerNumberModel で数値のみ許可) ---
+		JSpinner spnPrune = new JSpinner(new SpinnerNumberModel(3.0, 0.0, 10.0, 0.5));
+		// ★ 追加: ツールチップを設定
+		spnPrune.setToolTipText("Valid range: 0.0 to 10.0 (mm)");
+
+		JSpinner spnBulge = new JSpinner(new SpinnerNumberModel(1.35, 1.0, 3.0, 0.05));
+		// ★ 追加: ツールチップを設定
+		spnBulge.setToolTipText("Valid range: 1.0 to 3.0");
+
+		JSpinner spnShape = new JSpinner(new SpinnerNumberModel(0.65, 0.0, 1.0, 0.05));
+		// ★ 追加: ツールチップを設定
+		spnShape.setToolTipText("Valid range: 0.0 to 1.0");
+
+		JSpinner spnCurv = new JSpinner(new SpinnerNumberModel(0.0, -1.0, 1.0, 0.01));
+		// ★ 追加: ツールチップを設定
+		spnCurv.setToolTipText("Valid range: -1.0 to 1.0");
+
+        Font font = new Font("Meiryo", Font.PLAIN, 12);
+        
+        // 1行目: Graph Pruning
+        gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0;
+        JLabel lblPrune = new JLabel("Graph Pruning Threshold (mm):"); lblPrune.setFont(font);
+        formPanel.add(lblPrune, gbc);
+        gbc.gridx = 1; gbc.weightx = 1.0; spnPrune.setFont(font);
+        formPanel.add(spnPrune, gbc);
+
+        // 2行目: Bulge Ratio
+        gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0;
+        JLabel lblBulge = new JLabel("Min Bulge Ratio (>= 1.0):"); lblBulge.setFont(font);
+        formPanel.add(lblBulge, gbc);
+        gbc.gridx = 1; gbc.weightx = 1.0; spnBulge.setFont(font);
+        formPanel.add(spnBulge, gbc);
+
+        // 3行目: Shape Index
+        gbc.gridx = 0; gbc.gridy = 2; gbc.weightx = 0;
+        JLabel lblShape = new JLabel("Min Shape Index (Sphere=1.0):"); lblShape.setFont(font);
+        formPanel.add(lblShape, gbc);
+        gbc.gridx = 1; gbc.weightx = 1.0; spnShape.setFont(font);
+        formPanel.add(spnShape, gbc);
+
+        // 4行目: Curvature
+        gbc.gridx = 0; gbc.gridy = 3; gbc.weightx = 0;
+        JLabel lblCurv = new JLabel("Min Gaussian Curvature:"); lblCurv.setFont(font);
+        formPanel.add(lblCurv, gbc);
+        gbc.gridx = 1; gbc.weightx = 1.0; spnCurv.setFont(font);
+        formPanel.add(spnCurv, gbc);
+
+        dialog.add(formPanel, BorderLayout.CENTER);
+
+        // --- ボタンエリア ---
+        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JButton btnCancel = new JButton("Cancel");
+        JButton btnRun = new JButton("Run Re-calculation");
+        btnRun.setFont(new Font("Meiryo", Font.BOLD, 12));
+        btnRun.setBackground(new Color(220, 240, 255));
+        
+        btnCancel.addActionListener(e -> dialog.dispose());
+        btnRun.addActionListener(e -> {
+            dialog.dispose();
+            // 入力値を取得して再計算ワーカーを起動
+            double pPrune = (Double) spnPrune.getValue();
+            double pBulge = (Double) spnBulge.getValue();
+            double pShape = (Double) spnShape.getValue();
+            double pCurv  = (Double) spnCurv.getValue();
+            executeFastRecalculation(pPrune, pBulge, pShape, pCurv);
+        });
+
+        btnPanel.add(btnCancel);
+        btnPanel.add(btnRun);
+        dialog.add(btnPanel, BorderLayout.SOUTH);
+
+        dialog.pack();
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
+    }
+
+    /**
+     * Jerman画像から後半のパイプラインのみを高速に再実行するワーカー
+     */
+    private void executeFastRecalculation(double pruneThresh, double bulgeThresh, double siThresh, double curvThresh) {
+        JDialog progressDialog = new JDialog(this, "Fast Re-calculating...", true);
+        progressDialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
+        progressDialog.setSize(400, 200);
+        progressDialog.setLocationRelativeTo(this);
+        progressDialog.setLayout(new BorderLayout(10, 10));
+
+        JLabel statusLabel = new JLabel("Starting fast pipeline...", SwingConstants.CENTER);
+        JProgressBar progressBar = new JProgressBar();
+        progressBar.setIndeterminate(true);
+        progressDialog.add(statusLabel, BorderLayout.CENTER);
+        progressDialog.add(progressBar, BorderLayout.SOUTH);
+
+        SwingWorker<Void, String> worker = new SwingWorker<Void, String>() {
+            private List<AneurysmCandidate> newCandidates;
+            private VolumeData segVolume;
+
+            @Override
+            protected Void doInBackground() throws Exception {
+
+                publish("Load Vessel Segmentation...");
+                segVolume = VolumeLoader.loadDicom(vesselMask.getImagePlus().duplicate());
+
+                publish("Graph Construction & Pruning (Thresh: " + pruneThresh + ")...");
+                GraphPruner pruner = new GraphPruner();
+                pruner.prune(vesselTree, pruneThresh);
+                pruner.mergeLinearBranches(vesselTree);
+
+                publish("Extract Features...");
+                FeatureExtractor extractor = new FeatureExtractor();
+                extractor.extractInscribedRadii(vesselTree, distanceMap);
+                extractor.extractBulgeRatiosAndCurvatures(vesselTree, vesselMask);
+
+                publish("Detecting Aneurysms...");
+                AneurysmDetector detector = new AneurysmDetector(bulgeThresh, siThresh, curvThresh);
+                newCandidates = detector.detect(vesselTree);
+
+                publish("Saliency Scoring...");
+                SaliencyScorer scorer = new SaliencyScorer();
+                scorer.scoreAndSort(newCandidates);
+
+                return null;
+            }
+
+            @Override
+            protected void process(List<String> chunks) {
+                statusLabel.setText(chunks.get(chunks.size() - 1));
+            }
+
+            @Override
+            protected void done() {
+                progressDialog.dispose();
+                try {
+                    get(); 
+                    
+                    // --- UIのデータをすべて新しいものに差し替える ---
+                    candidateList = newCandidates;
+                    
+                    if (glCanvas != null) {
+                        glCanvas.setVolumeData(segVolume);
+                        glCanvas.setCandidates(candidateList);
+                    }
+                    
+                    // UIリストと判定の再構築
+                    populateCandidates();
+                    updateJudgeStatus();
+                    loadSkeletonColorMap(vesselTree);
+                    
+                    JOptionPane.showMessageDialog(AneurysmDetectorUI.this, 
+                        "Recalculation Complete, \nNum of aneurysm candidates: " + candidateList.size() + " ", 
+                        "Recalculation Complete", JOptionPane.INFORMATION_MESSAGE);
+                        
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    JOptionPane.showMessageDialog(AneurysmDetectorUI.this, "Error occured in recalculation...: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        };
+
+        worker.execute();
+        progressDialog.setVisible(true);
+    }
 
 	// ========================================================================
 	// 動脈瘤候補チェックパネル
@@ -503,39 +758,54 @@ public class AneurysmDetectorUI extends JFrame {
 
 			JLabel thumbnailLabel = new JLabel("No Image", SwingConstants.CENTER);
 			thumbnailLabel.setForeground(Color.DARK_GRAY);
-
+			
+			Point3D p = c.getPeakPoint();
+			
 			// サムネイル画像の抽出ロジック
-			if (praparat != null) {
+			if (rawImp != null) {
 				try {
-					Point3D p = c.getPeakPoint();
-					SlideGlass firstSg = praparat.getAllSlides().get(0);
-					int[] zct = praparat.getZCTArray(firstSg);
+					com.vis.core.log.Log.logger
+							.info("--- Thumbnail Debug: Candidate Pos: (" + p.x + ", " + p.y + ", " + p.z + ") ---");
 
-					// 動脈瘤が存在するZスライスの SlideGlass を取得
-					int targetIdx = praparat.calcZctIndex(new int[] { p.z, zct[1], zct[2] });
-					SlideGlass sg = praparat.getSlideGlassAt(targetIdx);
+					if (rawImp.getNSlices() == 0) {
+						com.vis.core.log.Log.logger.warning("raw image is empty!");
+					} else {
+						// ImageJのスタックは「1始まり」
+						int targetZ = p.z + 1;
 
-					if (sg != null && sg.getOriginalImage() != null) {
-						// ImageJ のプロセッサを取得
-						ij.process.ImageProcessor ip = sg.getOriginalImage().getProcessor().duplicate();
+						// スタックの範囲内か安全確認
+						if (targetZ >= 1 && targetZ <= rawImp.getStackSize()) {
 
-						// コントラストを自動調整（見やすくするため）
-						ip.resetMinAndMax();
+							// ★ キャッシュに依存せず、大元データのスタックから直接ImageProcessorを複製して取り出す
+							ij.process.ImageProcessor ip = rawImp.getStack().getProcessor(targetZ).duplicate();
 
-						// 動脈瘤の中心(p.x, p.y) の周囲 80x80 ピクセルを切り抜く
-						int cropSize = 80;
-						int cx = Math.max(0, p.x - cropSize / 2);
-						int cy = Math.max(0, p.y - cropSize / 2);
-						ip.setRoi(cx, cy, cropSize, cropSize);
-						ij.process.ImageProcessor croppedIp = ip.crop();
+							// コントラストを自動調整
+							ip.resetMinAndMax();
 
-						// 70x70 のサイズに縮小して ImageIcon に変換
-						Image img = croppedIp.getBufferedImage().getScaledInstance(70, 70, Image.SCALE_SMOOTH);
-						thumbnailLabel = new JLabel(new ImageIcon(img));
+							int cropSize = 80;
+							int cx = Math.max(0, p.x - cropSize / 2);
+							int cy = Math.max(0, p.y - cropSize / 2);
+
+							// 幅と高さが元画像のサイズをはみ出さないようにクリップ
+							int w = Math.min(cropSize, ip.getWidth() - cx);
+							int h = Math.min(cropSize, ip.getHeight() - cy);
+
+							ip.setRoi(cx, cy, w, h);
+							ij.process.ImageProcessor croppedIp = ip.crop();
+
+							// 70x70 のサイズに縮小して ImageIcon に変換
+							Image img = croppedIp.getBufferedImage().getScaledInstance(70, 70, Image.SCALE_SMOOTH);
+							thumbnailLabel = new JLabel(new ImageIcon(img));
+						} else {
+							com.vis.core.log.Log.logger.warning("Target Z (" + targetZ + ") is out of stack range.");
+						}
 					}
 				} catch (Exception ex) {
-					com.vis.core.log.Log.logger.warning("サムネイル生成失敗: " + ex.getMessage());
+					com.vis.core.log.Log.logger.warning("サムネイル生成例外: " + ex.getMessage());
+					ex.printStackTrace();
 				}
+			} else {
+				com.vis.core.log.Log.logger.warning("praparat is NULL!");
 			}
 
 			mini3DPlaceholder.add(thumbnailLabel, BorderLayout.CENTER);
@@ -570,7 +840,6 @@ public class AneurysmDetectorUI extends JFrame {
 				updateJudgeStatus();
 			});
 
-			Point3D p = c.getPeakPoint();
 			JLabel coordLabel = new JLabel(String.format("Pos: (%d, %d, %d)", p.x, p.y, p.z));
 			coordLabel.setFont(new Font("Arial", Font.PLAIN, 11));
 
@@ -610,7 +879,7 @@ public class AneurysmDetectorUI extends JFrame {
 			add(siLabel, gbc);
 
 			// ★ 追加: Saliency計算の詳細値を見るための「Details」ボタン
-			JButton detailsBtn = new JButton("詳細(Details)");
+			JButton detailsBtn = new JButton("Details");
 			detailsBtn.setFont(new Font("Meiryo", Font.PLAIN, 10));
 			detailsBtn.setMargin(new Insets(2, 5, 2, 5));
 			detailsBtn.addActionListener(e -> showDetailsDialog(c));

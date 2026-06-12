@@ -16,10 +16,17 @@ import com.vis.aneurysmdetector.preprocessing.Skeletonizer;
  * copyright visionary imaging services, inc.
  */
 import com.vis.aneurysmdetector.preprocessing.VesselSegmenter;
+import com.vis.aneurysmdetector.preprocessing.WhiteTopHat3D;
+import com.vis.core.log.Log;
 import com.vis.core.view.D2.ui.glasses.Praparat;
-import com.vis.core.view.D2.ui.glasses.Praparat.ViewMode;
+import com.vis.core.view.D2.ui.orientation.PlanarSupport;
+import com.vis.core.view.D2.ui.orientation.ImageOrientation.CutSurface;
+import com.vis.core.view.D3.ui.GantryTiltCorrector;
 import com.vis.core.view.D3.ui.VolumeData;
 import com.vis.core.view.D3.ui.VolumeLoader;
+import com.vis.dicom.Modality;
+import com.vis.dicom.Tag;
+import com.vis.dicom.image.GDicomTools;
 
 import ij.ImagePlus;
 import javax.swing.*;
@@ -49,20 +56,21 @@ public class AneurysmCADeApp {
 //                File selectedFile = chooser.getSelectedFile();
 //                startAnalysis(selectedFile.getAbsolutePath());
 //            }
-        	String path = "./test-mra";
-        	startAnalysis(path, true);
+//        	String path = "./test-mra";
+        	String path = "./C0005/dicom";
+        	startAnalysis(path);
         });
     }
     
-    public AneurysmCADeApp(String imageDir, boolean isStandalone) {
-    	startAnalysis(imageDir, isStandalone);
+    public AneurysmCADeApp(String imageDir) {
+    	startAnalysis(imageDir);
     }
     
-    public AneurysmCADeApp(Praparat pp, boolean isStandalone) {
-    	startAnalysis(pp.getImagePlus(), isStandalone);
+    public AneurysmCADeApp(Praparat pp) {
+    	startAnalysis(pp.getImagePlus());
     }
 
-    public static void startAnalysis(String imagePath, boolean isStandalone) {
+    public static void startAnalysis(String imagePath) {
         ImagePlus rawImp = null;
         if(new File(imagePath).isDirectory()) {
         	rawImp = ij.plugin.FolderOpener.open(imagePath);
@@ -72,10 +80,10 @@ public class AneurysmCADeApp {
         
         if (rawImp == null) throw new RuntimeException("Image load failed.");
         
-        startAnalysis(rawImp, isStandalone);
+        startAnalysis(rawImp);
     }
     
-    public static void startAnalysis(ImagePlus volume, boolean isStandalone) {
+    public static void startAnalysis(ImagePlus volume) {
         // プログレスダイアログの作成
         JDialog progressDialog = new JDialog((Frame) null, "Analyzing", true);
         progressDialog.setDefaultCloseOperation(JDialog.DO_NOTHING_ON_CLOSE);
@@ -96,7 +104,13 @@ public class AneurysmCADeApp {
             private List<AneurysmCandidate> candidates;
             private VolumeData segVolume;
             private VesselTree vesselTree; // ★ 追加: ツリー情報をUIに渡すために保持
-            private Praparat pp;
+            /*
+             * 中間処理画像
+             */
+            private ImagePlus nlmResultImp;
+            private ImagePlus jermanImp;
+            private Image3D segmentedMask;
+            private Image3D distanceMap;
 
             @Override
             protected Void doInBackground() throws Exception {
@@ -104,20 +118,52 @@ public class AneurysmCADeApp {
                 ImagePlus rawImp = volume;
                 if (rawImp == null) throw new RuntimeException("Image load failed.");
                 
-                pp = new Praparat(rawImp, null, ViewMode.SingleGrid, true);
-                Image3D rawImage = new Image3D(rawImp);
+                String modality_str = GDicomTools.getTag(rawImp, Tag.Modality);
+                CutSurface plane = PlanarSupport.planarOf(rawImp);
+                Modality m = Modality.valueOf(modality_str);
 
+				if (m == Modality.CT && plane == CutSurface.AXIAL) {
+					GantryTiltCorrector gtc = new GantryTiltCorrector();
+					double tiltAngle = GDicomTools.getDouble(rawImp, 1, "0018,1120"/* Gantry/Detector Tilt */);
+					double pixelSpacingY = rawImp.getCalibration().pixelHeight;
+					double sliceSpacing = GDicomTools.getVoxelDepth(rawImp);
+					double reconSliceSpacing = sliceSpacing < 1d ? sliceSpacing : 1d;
+					
+					PlanarSupport.standardizeStackOrientation(rawImp);
+
+					publish("20:Correcting Gantry Tilt (This may take a while)...");
+					rawImp = gtc.correctVolume3D(rawImp/* 16-bit image required */, tiltAngle, pixelSpacingY,
+							sliceSpacing, reconSliceSpacing);
+				}
+                
+				rawImp = com.vis.aneurysmdetector.preprocessing.AxialConverter.convertIfNeeded(rawImp);
+				
+                Image3D rawImage = new Image3D(rawImp);
                 publish("Phase 1: Denoising (Fast NLM)...");
-                DenoiseFilter denoiser = new DenoiseFilter(15, 1);
-                Image3D denoisedImage = denoiser.apply(rawImage);
+                Log.logger.info("Loaded image modality : "+modality_str);
+				DenoiseFilter denoiser = new DenoiseFilter(15, 1);
+				Image3D denoisedImage = denoiser.apply(rawImage);
+				
+				if (modality_str != null && (modality_str.equals("CT") || modality_str.equals("XA"))) {
+					Log.logger.info("Execute White Top Hat 3D for CT and XA, with default radius 5.");
+					WhiteTopHat3D wth = new WhiteTopHat3D();
+					Image3D wthImage = wth.apply(denoisedImage, 5);
+					com.vis.dicom.image.GDicomTools.copyPivotalMeta(rawImp,
+							wthImage.getImagePlus(), true);
+					//after copied header
+					denoisedImage = wthImage;
+				}
+                
+                nlmResultImp = denoisedImage.getImagePlus();
 
                 publish("Phase 1: Jerman 3D Vessel Enhancement...");
                 JermanFilter3D jermanFilter = new JermanFilter3D();
                 Image3D jermanImage = jermanFilter.apply(denoisedImage, new double[]{1.0, 2.0, 3.0});
-
+                jermanImp = jermanImage.getImagePlus();
+                
                 publish("Phase 2: Vessel Segmentation...");
                 VesselSegmenter segmenter = new VesselSegmenter();
-                Image3D segmentedMask = segmenter.segment(jermanImage);
+                segmentedMask = segmenter.segment(jermanImage);
                 // 3D表示用に VolumeData 化
                 segVolume = VolumeLoader.loadDicom(segmentedMask.getImagePlus().duplicate());
 
@@ -134,12 +180,17 @@ public class AneurysmCADeApp {
 
                 publish("Phase 4: Distance Transform & Features...");
                 DistanceTransform3D dt3D = new DistanceTransform3D();
-                Image3D distanceMap = dt3D.computeDistanceMap(segmentedMask);
+                distanceMap = dt3D.computeDistanceMap(segmentedMask);
                 FeatureExtractor extractor = new FeatureExtractor();
                 extractor.extractInscribedRadii(vesselTree, distanceMap);
                 extractor.extractBulgeRatiosAndCurvatures(vesselTree, segmentedMask);
 
                 publish("Phase 4: Detecting Aneurysms...");
+                /*
+                 * double minBulge,
+                 * double minShapeIndex,
+                 * double minCurvature
+                 */
                 AneurysmDetector detector = new AneurysmDetector(1.35, 0.65, 0.0);
                 candidates = detector.detect(vesselTree);
 
@@ -148,7 +199,7 @@ public class AneurysmCADeApp {
                 scorer.scoreAndSort(candidates);
 
                 publish("Analysis Complete! Launching UI...");
-                Thread.sleep(500); // UIへの遷移を滑らかに見せるための少しのタメ
+                Thread.sleep(300); // UIへの遷移を滑らかに見せるための少しのタメ
                 return null;
             }
 
@@ -166,7 +217,14 @@ public class AneurysmCADeApp {
                     get(); // 例外が起きていればここでキャッチされる
                     
                     // UIの起動
-                    AneurysmDetectorUI ui = new AneurysmDetectorUI(candidates, segVolume, pp, isStandalone);
+                    //大元のアプリから呼び出されて連動している状態なので、最後の引数に false を指定
+                    AneurysmDetectorUI ui = new AneurysmDetectorUI(candidates, segVolume, volume, false /*isStandalone*/);
+                    ui.setNLMResults(nlmResultImp);
+                    ui.setJermanResults(jermanImp);
+                    ui.setVesselMaskResults(segmentedMask);
+                    ui.setDistanceMapResults(distanceMap);
+                    ui.setVesselTreeResults(vesselTree);
+                    
                     // ★ 追加: 構築したVesselTreeをUIに渡し、カラーマップ中心線を生成！
                     ui.loadSkeletonColorMap(vesselTree);
                     ui.setVisible(true);

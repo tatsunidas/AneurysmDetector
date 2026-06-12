@@ -7,7 +7,7 @@
 	<version>0.0.1-SNAPSHOT</version>
 
 	<properties>
-		<exec.mainClass>com.vis.aneurysmdetector.Launcher</exec.mainClass>
+		<exec.mainClass>com.vis.aneurysmdetector.ui.AneurysmCADeApp</exec.mainClass>
 		<java.version>11</java.version>
 		<maven.compiler.source>11</maven.compiler.source>
 		<maven.compiler.target>11</maven.compiler.target>
@@ -15,8 +15,53 @@
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 	</properties>
-	
-		<repositories>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-jar-plugin</artifactId>
+				<version>3.3.0</version>
+				<configuration>
+					<archive>
+						<manifest>
+							<!-- GRAPHY PlugIn must need main class to detect
+							triger point -->
+							<mainClass>
+								com.vis.aneurysmdetector.ui.AneurysmCADeApp</mainClass>
+						</manifest>
+					</archive>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-assembly-plugin</artifactId>
+				<version>3.6.0</version>
+				<configuration>
+					<archive>
+						<manifest>
+							<mainClass>
+								com.vis.aneurysmdetector.ui.AneurysmCADeApp</mainClass>
+						</manifest>
+					</archive>
+					<descriptorRefs>
+						<descriptorRef>jar-with-dependencies</descriptorRef>
+					</descriptorRefs>
+				</configuration>
+				<executions>
+					<execution>
+						<id>make-assembly</id>
+						<phase>package</phase>
+						<goals>
+							<goal>single</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+
+	<repositories>
 		<!-- pixelmed.jar -->
 		<repository>
 			<id>XNatLibs</id>
@@ -52,13 +97,14 @@
 			<groupId>com.vis.graphy</groupId>
 			<artifactId>graphy</artifactId>
 			<version>0.0.17</version>
+			<scope>provided</scope>
 		</dependency>
 		<!-- Source: https://mvnrepository.com/artifact/sc.fiji/Skeletonize3D_ -->
 		<dependency>
-		    <groupId>sc.fiji</groupId>
-		    <artifactId>Skeletonize3D_</artifactId>
-		    <version>2.1.1</version>
-		    <scope>compile</scope>
+			<groupId>sc.fiji</groupId>
+			<artifactId>Skeletonize3D_</artifactId>
+			<version>2.1.1</version>
+			<scope>compile</scope>
 		</dependency>
 	</dependencies>
 </project>

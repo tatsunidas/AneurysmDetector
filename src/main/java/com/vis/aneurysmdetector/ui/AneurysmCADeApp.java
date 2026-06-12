@@ -1,3 +1,6 @@
+/**
+ * copyright visionary imaging services, inc.
+ */
 package com.vis.aneurysmdetector.ui;
 
 import com.vis.aneurysmdetector.anatomy.GraphPruner;
@@ -18,6 +21,9 @@ import com.vis.aneurysmdetector.preprocessing.Skeletonizer;
 import com.vis.aneurysmdetector.preprocessing.VesselSegmenter;
 import com.vis.aneurysmdetector.preprocessing.WhiteTopHat3D;
 import com.vis.core.log.Log;
+import com.vis.core.plugin.ToolbarPlugIn;
+import com.vis.core.util.ImageUtils;
+import com.vis.core.view.D2.ui.Viewer2DScreen;
 import com.vis.core.view.D2.ui.glasses.Praparat;
 import com.vis.core.view.D2.ui.orientation.PlanarSupport;
 import com.vis.core.view.D2.ui.orientation.ImageOrientation.CutSurface;
@@ -29,9 +35,13 @@ import com.vis.dicom.Tag;
 import com.vis.dicom.image.GDicomTools;
 
 import ij.ImagePlus;
+
+import javax.imageio.ImageIO;
 import javax.swing.*;
 import java.awt.*;
+import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.IOException;
 import java.util.List;
 
 /**
@@ -40,10 +50,12 @@ import java.util.List;
  * 
  * @author tatsunidas
  */
-public class AneurysmCADeApp {
+public class AneurysmCADeApp implements ToolbarPlugIn{
 
-    public static void main(String[] args) {
-        // Look & Feel をOSネイティブにして綺麗にする
+    public static void main(String[] args) {}
+    
+    public static void debug() {
+    	// Look & Feel をOSネイティブにして綺麗にする
         try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); } 
         catch (Exception e) { e.printStackTrace(); }
 
@@ -61,6 +73,11 @@ public class AneurysmCADeApp {
         	startAnalysis(path);
         });
     }
+    
+    /**
+     * for plugin
+     */
+    public AneurysmCADeApp() {}
     
     public AneurysmCADeApp(String imageDir) {
     	startAnalysis(imageDir);
@@ -239,4 +256,52 @@ public class AneurysmCADeApp {
         worker.execute(); // バックグラウンド処理開始
         progressDialog.setVisible(true); // ダイアログを表示してユーザーの操作をブロック
     }
+
+	@Override
+	public void run(String[] arg) {
+		Viewer2DScreen d2 = Viewer2DScreen.getInstance();
+		if(d2 == null) {
+			JOptionPane.showMessageDialog(null, "2D Viewer not recognized, can not start Aneurysm detector.");
+			return;
+		}
+		
+        try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); } 
+        catch (Exception e) { e.printStackTrace(); }
+        
+        List<Praparat> praps = d2.getSelectedPraps();
+        if(praps == null || praps.isEmpty()) {
+        	return;
+        }
+        
+        Praparat tp = praps.get(0);
+        
+        int zct = tp.getCurrentSlideZCTIndex();
+        int[] zct_indices = tp.calcZCTArrayFromIndex(zct);
+        
+        SwingUtilities.invokeLater(() -> {
+        	startAnalysis(praps.get(0).getImagePlus(zct_indices[1],zct_indices[2]));
+        });
+	}
+
+	@Override
+	public Icon getIcon() {
+		java.net.URL imgURL = getClass().getResource("/AneurysmDetectorIcon.png");
+		if (imgURL != null) {
+			try {
+				BufferedImage im = ImageIO.read(imgURL);
+				Image img = ImageUtils.resize(im, 48, 48);
+				return new ImageIcon(img);
+			} catch (IOException e) {
+				e.printStackTrace();
+				return null;
+			}
+		} else {
+			return null;
+		}
+	}
+
+	@Override
+	public String getToolTipText() {
+		return "Aneurysm Detector";
+	}
 }

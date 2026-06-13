@@ -5,6 +5,7 @@ package com.vis.aneurysmdetector.ui;
 
 import com.vis.core.view.D2.ui.SeriesWindow;
 import com.vis.core.view.D2.ui.glasses.Praparat.ViewMode;
+import com.vis.core.view.D3.ui.LegendPosition;
 import com.vis.core.view.D3.ui.VolumeData;
 
 import com.vis.aneurysmdetector.core.AneurysmCandidate;
@@ -17,6 +18,7 @@ import com.vis.aneurysmdetector.detection.SaliencyScorer;
 import com.vis.aneurysmdetector.core.Image3D;
 import com.vis.aneurysmdetector.core.VesselTree;
 import com.vis.core.view.D3.ui.VolumeLoader;
+import com.vis.core.view.D3.util.AlignMesh;
 
 import ij.ImagePlus;
 
@@ -58,6 +60,8 @@ public class AneurysmDetectorUI extends JFrame {
 	private Image3D vesselMask;
 	private Image3D distanceMap;
 	private VesselTree vesselTree;
+	
+	private ij.process.LUT currentLut;//buldge colorbar
 	
 	AneurysmCandidate highlightedCandidate;
 
@@ -358,6 +362,8 @@ public class AneurysmDetectorUI extends JFrame {
 
 		splitPane.setRightComponent(sidebarPanel);
 		add(splitPane, BorderLayout.CENTER);
+		
+		this.currentLut = com.vis.configuration.Resources.LUT_PHASE.loadLUT();
 
 		// データの流し込みと初期化
 		populateCandidates();
@@ -521,20 +527,29 @@ public class AneurysmDetectorUI extends JFrame {
 	}
 
 	/**
-	 * Bulge Ratio に応じてカラーマップ（青 ➡ 緑 ➡ 黄 ➡ 赤）を生成します。
+	 * Bulge Ratio に応じてカラーマップを生成します。
 	 */
 	private float[] getBulgeColor(double bulge) {
-		// 正常血管 (1.0) は青色、異常 (1.35以上) は赤色になるようにグラデーション
+		// 正常血管 (1.0) から 異常 (1.5以上) になるように 0.0 ~ 1.0 で正規化
 		double norm = (bulge - 1.0) / (1.5 - 1.0);
 		norm = Math.max(0.0, Math.min(norm, 1.0)); // 0.0 ~ 1.0 にクランプ
 
-		// HSL色空間からRGBへの簡易変換 (青=240度, 赤=0度)
-		float hue = (float) ((1.0 - norm) * 240.0 / 360.0);
-		int rgb = Color.HSBtoRGB(hue, 1.0f, 1.0f);
-		Color c = new Color(rgb);
-
-		return new float[] { c.getRed() / 255.0f, c.getGreen() / 255.0f, c.getBlue() / 255.0f, 1.0f // Alpha
-		};
+		if (this.currentLut != null) {
+			// ★ LUTがロードされている場合は、256階調のパレットからRGBをサンプリング
+			int lutIndex = (int) (norm * 255.0);
+			lutIndex = Math.max(0, Math.min(255, lutIndex));
+			
+			float r = this.currentLut.getRed(lutIndex) / 255.0f;
+			float g = this.currentLut.getGreen(lutIndex) / 255.0f;
+			float b = this.currentLut.getBlue(lutIndex) / 255.0f;
+			return new float[] { r, g, b, 1.0f };
+		} else {
+			// フォールバック: HSL色空間からRGBへの簡易変換 (青=240度, 赤=0度)
+			float hue = (float) ((1.0 - norm) * 240.0 / 360.0);
+			int rgb = Color.HSBtoRGB(hue, 1.0f, 1.0f);
+			Color c = new Color(rgb);
+			return new float[] { c.getRed() / 255.0f, c.getGreen() / 255.0f, c.getBlue() / 255.0f, 1.0f };
+		}
 	}
 	
 	public void setNLMResults(ImagePlus nlmResultImp) {
@@ -665,6 +680,10 @@ public class AneurysmDetectorUI extends JFrame {
         SwingWorker<Void, String> worker = new SwingWorker<Void, String>() {
             private List<AneurysmCandidate> newCandidates;
             private VolumeData segVolume;
+            private float[] calculatedBulgeMap; 
+            
+            // ★ 追加: ワーカー内で生成し、カラーリングまで完了したメッシュ
+            private com.vis.core.view.D3.ui.MeshData coloredMesh; 
 
             @Override
             protected Void doInBackground() throws Exception {
@@ -680,7 +699,54 @@ public class AneurysmDetectorUI extends JFrame {
                 publish("Extract Features...");
                 FeatureExtractor extractor = new FeatureExtractor();
                 extractor.extractInscribedRadii(vesselTree, distanceMap);
-                extractor.extractBulgeRatiosAndCurvatures(vesselTree, vesselMask);
+                calculatedBulgeMap = extractor.extractBulgeRatiosAndCurvatures(vesselTree, vesselMask);
+
+                // ==========================================================
+                // ★ 追加: MarchingCubesによるメッシュ生成と、BulgeMapからの頂点カラーサンプリング
+                // ==========================================================
+                publish("Generating Colored 3D Mesh...");
+                coloredMesh = com.vis.core.view.D3.ui.MarchingCubes.generateMesh(segVolume, 127.5f);
+                
+                if (coloredMesh != null && coloredMesh.vertices != null) {
+                    int vertexCount = coloredMesh.vertices.length / 3;
+                    float[] vertexColors = new float[vertexCount * 4]; // R, G, B, A
+                    
+                    int w = segVolume.width;
+                    int h = segVolume.height;
+                    int d = segVolume.depth;
+                    
+                    for (int i = 0; i < coloredMesh.vertices.length; i += 3) {
+                        // 1. 頂点座標(物理mm)から、元のボクセルインデックスを逆算
+                        int x = (int) Math.round(coloredMesh.vertices[i] / segVolume.pixelSpacingX);
+                        int y = (int) Math.round(coloredMesh.vertices[i + 1] / segVolume.pixelSpacingY);
+                        int z = (int) Math.round(coloredMesh.vertices[i + 2] / segVolume.sliceThickness);
+                        
+                        // 安全のためのクランプ処理
+                        x = Math.max(0, Math.min(w - 1, x));
+                        y = Math.max(0, Math.min(h - 1, y));
+                        z = Math.max(0, Math.min(d - 1, z));
+                        
+                        // 2. 1次元配列(BulgeMap)から膨らみ率を取得
+                        int idx = z * w * h + y * w + x;
+                        float bulge = calculatedBulgeMap[idx];
+                        
+                        // 3. Bulge Ratioを RGBA の色に変換
+                        float[] rgba = getBulgeColor(bulge);
+                        
+                        // 4. カラー配列に格納
+                        int cIdx = (i / 3) * 4;
+                        vertexColors[cIdx]     = rgba[0];
+                        vertexColors[cIdx + 1] = rgba[1];
+                        vertexColors[cIdx + 2] = rgba[2];
+                        vertexColors[cIdx + 3] = rgba[3];
+                    }
+                    
+                    // MeshDataにカラー配列をセット
+                    coloredMesh.colors = vertexColors;
+                    
+                    // 最後にGLCanvasの描画空間(-0.5 ~ 0.5)にアライメント
+                    AlignMesh.alignMeshToVolume(coloredMesh, segVolume);
+                }
 
                 publish("Detecting Aneurysms...");
                 AneurysmDetector detector = new AneurysmDetector(bulgeThresh, siThresh, curvThresh);
@@ -704,15 +770,22 @@ public class AneurysmDetectorUI extends JFrame {
                 try {
                     get(); 
                     
-                    // --- UIのデータをすべて新しいものに差し替える ---
                     candidateList = newCandidates;
                     
                     if (glCanvas != null) {
                         glCanvas.setVolumeData(segVolume);
                         glCanvas.setCandidates(candidateList);
+                        
+                        // ==========================================================
+                        // ★ 追加: 完成したカラー付きメッシュをCanvasに登録して表示
+                        // ==========================================================
+                        if (coloredMesh != null) {
+                            glCanvas.addOrUpdateMesh("VesselMask", coloredMesh);
+                            glCanvas.setMeshVisible(true);
+                            glCanvas.addLegend(1.0, 1.5, "Bulge Ratio", LegendPosition.BOTTOM_RIGHT, currentLut);
+                        }
                     }
                     
-                    // UIリストと判定の再構築
                     populateCandidates();
                     updateJudgeStatus();
                     loadSkeletonColorMap(vesselTree);

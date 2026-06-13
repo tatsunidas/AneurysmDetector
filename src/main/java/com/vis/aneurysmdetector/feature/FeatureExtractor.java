@@ -58,8 +58,10 @@ public class FeatureExtractor {
 	 * とする。中心線由来の膨らみ評価: distanceMap[CL] / R_{normal} を計算する。（紡錘状・分岐部コブの検知）表面由来の膨らみ評価:
 	 * KDTreeで表面から最も近いCLを探し、actualDistance / R_{normal} を計算する。（側壁コブの検知）最大値の採用:
 	 * 2と3の大きい方を、そのポイントの最終的な Bulge Ratio とする。
+	 * 
+	 * @return 空間上の各ボクセルにおけるBulge Ratioを格納した3Dマップ（1D配列化されたfloat[]）
      */
-    public void extractBulgeRatiosAndCurvatures(VesselTree tree, Image3D segmentedMask) {
+    public float[] extractBulgeRatiosAndCurvatures(VesselTree tree, Image3D segmentedMask) {
         System.out.println("Calculating Bulge Ratios and Curvatures (Single-Pass)...");
         ImagePlus imp = segmentedMask.getImagePlus();
         ImageStack stack = imp.getStack();
@@ -70,8 +72,14 @@ public class FeatureExtractor {
         double dz = imp.getCalibration().pixelDepth;
         if (dx <= 0) dx = 1.0; if (dy <= 0) dy = 1.0; if (dz <= 0) dz = 1.0;
 
+        // ==========================================================
+        // ★ 追加: メッシュ頂点カラー用の 3D Bulge Ratio マップ
+        // ==========================================================
+        float[] bulgeMap = new float[w * h * d];
+        // 初期値として、正常な血管を示す 1.0f で全体を埋めておく
+        java.util.Arrays.fill(bulgeMap, 1.0f);
+
         // --- 1. 曲率計算のための平滑化（ガウスブラー） ---
-        // バイナリ画像のままだと微分計算が破綻するため、32-bit Floatにして平滑化する
         System.out.println("  Generating smooth scalar field for curvature derivatives...");
         ImagePlus smoothImp = imp.duplicate();
         new ImageConverter(smoothImp).convertToGray32();
@@ -115,20 +123,30 @@ public class FeatureExtractor {
         int surfaceVoxelCount = 0;
         for (int z = 0; z < d; z++) {
             byte[] pixels = volume[z];
+            int zOffset = z * w * h; // 1次元配列アクセスのためのオフセット計算
+            
             for (int y = 0; y < h; y++) {
+                int yOffset = y * w;
+                
                 for (int x = 0; x < w; x++) {
-                    if ((pixels[y * w + x] & 0xff) == 255 && isSurfaceVoxel(volume, x, y, z, w, h, d)) {
+                    if ((pixels[yOffset + x] & 0xff) == 255 && isSurfaceVoxel(volume, x, y, z, w, h, d)) {
                         surfaceVoxelCount++;
                         
                         NearestResult result = kdTree.findNearest(x, y, z);
                         if (result != null && result.info != null) {
                             CenterlinePointInfo nearestCL = result.info;
                             
-                            // [Bulge Ratio の更新]
+                            // [Bulge Ratio の計算]
                             double actualDistance = Math.sqrt(result.distanceSq);
                             double rNormal = baselineRadii.get(nearestCL.branch);
                             double bulgeRatioSurface = actualDistance / rNormal;
                             
+                            // ==========================================================
+                            // ★ 追加: 表面ボクセルの Bulge Ratio を 3Dマップに記録する
+                            // ==========================================================
+                            bulgeMap[zOffset + yOffset + x] = (float) bulgeRatioSurface;
+
+                            // [中心線側の最大値更新]
                             double currentMaxBulge = nearestCL.branch.getBulgeRatios().get(nearestCL.index);
                             if (bulgeRatioSurface > currentMaxBulge) {
                                 nearestCL.branch.setBulgeRatioAt(nearestCL.index, bulgeRatioSurface);
@@ -139,7 +157,6 @@ public class FeatureExtractor {
                             double K = curvatures[0];
                             double SI = curvatures[1];
 
-                            // 最大のSI（よりドームに近い形状）を記録する
                             double currentMaxSI = nearestCL.branch.getShapeIndices().get(nearestCL.index);
                             if (SI > currentMaxSI) {
                                 nearestCL.branch.setShapeIndexAt(nearestCL.index, SI);
@@ -153,6 +170,9 @@ public class FeatureExtractor {
         smoothImp.close();
         System.out.println("  Processed " + surfaceVoxelCount + " surface voxels.");
         System.out.println("  Bulge Ratios and Curvatures mapped successfully.");
+        
+        // ★ 構築した3Dマップを返す
+        return bulgeMap;
     }
 
     /**

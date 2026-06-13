@@ -52,7 +52,9 @@ import java.util.List;
  */
 public class AneurysmCADeApp implements ToolbarPlugIn{
 
-    public static void main(String[] args) {}
+    public static void main(String[] args) {
+    	debug();
+    }
     
     public static void debug() {
     	// Look & Feel をOSネイティブにして綺麗にする

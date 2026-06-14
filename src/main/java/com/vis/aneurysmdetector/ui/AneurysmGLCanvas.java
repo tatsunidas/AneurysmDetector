@@ -409,7 +409,9 @@ public class AneurysmGLCanvas extends GLCanvas {
 					GL20.glUniform4f(colorLoc, 1.0f, 0.5f, 0.0f, 1.0f);
 				}
 				Point3D p = c.getPeakPoint();
-                float cx = (p.x + 0.5f) / vol.width - 0.5f;
+				//左手系の動脈瘤座標 p.x を、右手系ボリュームのX軸に合わせて反転マッピングします。
+				// ★ 左手系インデックス p.x を 右手系（vol.width - 1 - p.x）に変換
+				float cx = ((vol.width - 1 - p.x) + 0.5f) / vol.width - 0.5f;
                 float cy = (p.y + 0.5f) / vol.height - 0.5f;
                 float cz = (p.z + 0.5f) / vol.depth - 0.5f;
 
@@ -444,7 +446,8 @@ public class AneurysmGLCanvas extends GLCanvas {
  			return;
 
  		// 1. ボクセル空間(0 ~ width) を 正規化座標系(-0.5 ~ 0.5) に変換 (ローカル座標)
- 		float cx = (p.x + 0.5f) / vol.width - 0.5f;
+ 		// ★ カメラが正しい右手系ボリュームの動脈瘤候補を向くように反転
+ 		float cx = ((vol.width - 1 - p.x) + 0.5f) / vol.width - 0.5f;
  		float cy = (p.y + 0.5f) / vol.height - 0.5f;
  		float cz = (p.z + 0.5f) / vol.depth - 0.5f;
 

@@ -5,7 +5,6 @@ package com.vis.aneurysmdetector.ui;
 
 import com.vis.core.view.D2.ui.SeriesWindow;
 import com.vis.core.view.D2.ui.glasses.Praparat.ViewMode;
-import com.vis.core.view.D3.ui.LegendPosition;
 import com.vis.core.view.D3.ui.VolumeData;
 
 import com.vis.aneurysmdetector.core.AneurysmCandidate;
@@ -237,6 +236,30 @@ public class AneurysmDetectorUI extends JFrame {
 		toolBar.add(btnShowSkel);
 		
 		// ==========================================================
+		// ★ 追加: メッシュとボリューム(MIP)の表示切替トグルボタン
+		// ==========================================================
+		JToggleButton btnShowMesh = new JToggleButton("🌈 Colored Mesh (ON)", true);
+		btnShowMesh.addActionListener(e -> {
+			boolean isShowing = btnShowMesh.isSelected();
+			btnShowMesh.setText(isShowing ? "🌈 Colored Mesh (ON)" : "🌈 Colored Mesh (OFF)");
+			if (glCanvas != null) {
+				glCanvas.setMeshVisible(isShowing);
+			}
+		});
+		toolBar.addSeparator();
+		toolBar.add(btnShowMesh);
+
+		JToggleButton btnShowVol = new JToggleButton("☁ Volume MIP (OFF)", false);
+		btnShowVol.addActionListener(e -> {
+			boolean isShowing = btnShowVol.isSelected();
+			btnShowVol.setText(isShowing ? "☁ Volume MIP (ON)" : "☁ Volume MIP (OFF)");
+			if (glCanvas != null) {
+				glCanvas.setShowVolume(isShowing);
+			}
+		});
+		toolBar.add(btnShowVol);
+
+		// ==========================================================
         // ★ 追加: 3Dビューの回転・ズーム・注視点を初期状態に戻すリセットボタン
         // ==========================================================
         JButton btnResetView = new JButton("🔄 Reset View");
@@ -370,15 +393,15 @@ public class AneurysmDetectorUI extends JFrame {
 		updateJudgeStatus();
 
 		// ==========================================================
-		// ★ 修正: Canvasの再描画タイマー（ウィンドウ破棄時の安全停止付き）
+		// Canvasの再描画タイマー（フリッカー防止の完全同期処理）
 		// ==========================================================
 		Timer timer = new Timer(30, e -> {
-			// キャンバスが存在し、かつ画面上に表示可能な状態(破棄されていない)かチェック
 			if (glCanvas != null && glCanvas.isDisplayable()) {
+				// 1. OpenGLの3D描画とマウスイベントを処理
 				glCanvas.render();
+				// 2. SwingのRepaintManagerに、安全にカラーバーを描画させる
 				glCanvas.repaint();
 			} else {
-				// ウィンドウが閉じられてキャンバスが破棄されたら、このタイマー自体を安全に停止させる
 				((Timer) e.getSource()).stop();
 			}
 		});
@@ -395,6 +418,11 @@ public class AneurysmDetectorUI extends JFrame {
 		judgeLabel.setFont(new Font("Meiryo", Font.BOLD, 18));
 		judgePanel.add(judgeLabel, BorderLayout.CENTER);
 	}
+	
+	public void buildInitialMesh() {
+        // デフォルトのパラメータでメッシュ生成とカラーリングを裏で1回だけ走らせる
+        executeFastRecalculation(3.0, 1.35, 0.65, 0.0);
+    }
 
 	private void populateCandidates() {
 		listContainer.removeAll();
@@ -483,6 +511,9 @@ public class AneurysmDetectorUI extends JFrame {
 
 		// 頂点リスト: (X, Y, Z, R, G, B, A) を1頂点とする。線分なので2頂点で1セット。
 		java.util.List<Float> vertices = new java.util.ArrayList<>();
+		
+		// 血管マスク（右手系）の横幅 w を基準に、中心線のX座標を反転マッピング
+		int w = this.vesselMask.getWidth();
 
 		for (com.vis.aneurysmdetector.core.Branch branch : tree.getBranches()) {
 			java.util.List<Point3D> nodes = branch.getPath();
@@ -496,7 +527,7 @@ public class AneurysmDetectorUI extends JFrame {
 				Point3D n2 = nodes.get(i + 1);
 
 				// 頂点1
-				vertices.add((float) n1.x);
+				vertices.add((float) (w - 1 - n1.x));
 				vertices.add((float) n1.y);
 				vertices.add((float) n1.z);
 				float[] color1 = getBulgeColor(BulgeRatios.get(i));
@@ -506,7 +537,7 @@ public class AneurysmDetectorUI extends JFrame {
 				vertices.add(color1[3]);
 
 				// 頂点2
-				vertices.add((float) n2.x);
+				vertices.add((float) (w - 1 - n2.x));
 				vertices.add((float) n2.y);
 				vertices.add((float) n2.z);
 				float[] color2 = getBulgeColor(BulgeRatios.get(i + 1));
@@ -715,31 +746,34 @@ public class AneurysmDetectorUI extends JFrame {
                     int h = segVolume.height;
                     int d = segVolume.depth;
                     
-                    for (int i = 0; i < coloredMesh.vertices.length; i += 3) {
-                        // 1. 頂点座標(物理mm)から、元のボクセルインデックスを逆算
-                        int x = (int) Math.round(coloredMesh.vertices[i] / segVolume.pixelSpacingX);
-                        int y = (int) Math.round(coloredMesh.vertices[i + 1] / segVolume.pixelSpacingY);
-                        int z = (int) Math.round(coloredMesh.vertices[i + 2] / segVolume.sliceThickness);
-                        
-                        // 安全のためのクランプ処理
-                        x = Math.max(0, Math.min(w - 1, x));
-                        y = Math.max(0, Math.min(h - 1, y));
-                        z = Math.max(0, Math.min(d - 1, z));
-                        
-                        // 2. 1次元配列(BulgeMap)から膨らみ率を取得
-                        int idx = z * w * h + y * w + x;
-                        float bulge = calculatedBulgeMap[idx];
-                        
-                        // 3. Bulge Ratioを RGBA の色に変換
-                        float[] rgba = getBulgeColor(bulge);
-                        
-                        // 4. カラー配列に格納
-                        int cIdx = (i / 3) * 4;
-                        vertexColors[cIdx]     = rgba[0];
-                        vertexColors[cIdx + 1] = rgba[1];
-                        vertexColors[cIdx + 2] = rgba[2];
-                        vertexColors[cIdx + 3] = rgba[3];
-                    }
+					for (int i = 0; i < coloredMesh.vertices.length; i += 3) {
+						// 1. 頂点座標(物理mm)から、元のボクセルインデックスを逆算
+						int x = (int) Math.round(coloredMesh.vertices[i] / segVolume.pixelSpacingX);
+						int y = (int) Math.round(coloredMesh.vertices[i + 1] / segVolume.pixelSpacingY);
+						int z = (int) Math.round(coloredMesh.vertices[i + 2] / segVolume.sliceThickness);
+
+						// 安全のためのクランプ処理
+						// ★ メッシュから逆算した右手系インデックス x を、左手系 x_local に戻す
+						int x_local = w - 1 - x;
+						x_local = Math.max(0, Math.min(w - 1, x_local)); // 安全のためのクランプ
+						
+						y = Math.max(0, Math.min(h - 1, y));
+						z = Math.max(0, Math.min(d - 1, z));
+
+						// 2. 1次元配列(BulgeMap)から膨らみ率を取得
+						int idx = z * w * h + y * w + x_local;
+						float bulge = calculatedBulgeMap[idx];
+
+						// 3. Bulge Ratioを RGBA の色に変換
+						float[] rgba = getBulgeColor(bulge);
+
+						// 4. カラー配列に格納
+						int cIdx = (i / 3) * 4;
+						vertexColors[cIdx] = rgba[0];
+						vertexColors[cIdx + 1] = rgba[1];
+						vertexColors[cIdx + 2] = rgba[2];
+						vertexColors[cIdx + 3] = rgba[3];
+					}
                     
                     // MeshDataにカラー配列をセット
                     coloredMesh.colors = vertexColors;
@@ -776,14 +810,20 @@ public class AneurysmDetectorUI extends JFrame {
                         glCanvas.setVolumeData(segVolume);
                         glCanvas.setCandidates(candidateList);
                         
-                        // ==========================================================
-                        // ★ 追加: 完成したカラー付きメッシュをCanvasに登録して表示
-                        // ==========================================================
-                        if (coloredMesh != null) {
-                            glCanvas.addOrUpdateMesh("VesselMask", coloredMesh);
-                            glCanvas.setMeshVisible(true);
-                            glCanvas.addLegend(1.0, 1.5, "Bulge Ratio", LegendPosition.BOTTOM_RIGHT, currentLut);
-                        }
+						// ==========================================================
+						// ★ 修正: 完成したカラー付きメッシュをCanvasに登録して表示
+						// ==========================================================
+						if (coloredMesh != null) {
+							glCanvas.addOrUpdateMesh("VesselMask", coloredMesh);
+							glCanvas.setMeshVisible(true);
+
+							// ★ 追加: 白いボリューム表示をOFFにして、メッシュを露出させる！
+							glCanvas.setShowVolume(false);
+							glCanvas.setShowRoi(false);
+
+							// フリッカーが解決できない
+							//glCanvas.addLegend(1.0, 1.5, "Bulge Ratio", LegendPosition.BOTTOM_RIGHT, currentLut);
+						}
                     }
                     
                     populateCandidates();
@@ -791,8 +831,8 @@ public class AneurysmDetectorUI extends JFrame {
                     loadSkeletonColorMap(vesselTree);
                     
                     JOptionPane.showMessageDialog(AneurysmDetectorUI.this, 
-                        "Recalculation Complete, \nNum of aneurysm candidates: " + candidateList.size() + " ", 
-                        "Recalculation Complete", JOptionPane.INFORMATION_MESSAGE);
+                        "Calculation Complete, \nNum of aneurysm candidates: " + candidateList.size() + " ", 
+                        "Calculation Complete", JOptionPane.INFORMATION_MESSAGE);
                         
                 } catch (Exception e) {
                     e.printStackTrace();

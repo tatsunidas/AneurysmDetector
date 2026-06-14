@@ -141,6 +141,7 @@ public class AneurysmCADeApp implements ToolbarPlugIn{
                 CutSurface plane = PlanarSupport.planarOf(rawImp);
                 Modality m = Modality.valueOf(modality_str);
 
+                boolean standardizeIsDone = false;
 				if (m == Modality.CT && plane == CutSurface.AXIAL) {
 					GantryTiltCorrector gtc = new GantryTiltCorrector();
 					double tiltAngle = GDicomTools.getDouble(rawImp, 1, "0018,1120"/* Gantry/Detector Tilt */);
@@ -149,13 +150,14 @@ public class AneurysmCADeApp implements ToolbarPlugIn{
 					double reconSliceSpacing = sliceSpacing < 1d ? sliceSpacing : 1d;
 					
 					PlanarSupport.standardizeStackOrientation(rawImp);
+					standardizeIsDone = true;
 
 					publish("20:Correcting Gantry Tilt (This may take a while)...");
 					rawImp = gtc.correctVolume3D(rawImp/* 16-bit image required */, tiltAngle, pixelSpacingY,
 							sliceSpacing, reconSliceSpacing);
 				}
                 
-				rawImp = com.vis.aneurysmdetector.preprocessing.AxialConverter.convertIfNeeded(rawImp);
+				rawImp = com.vis.core.view.D3.util.AxialConverter.convertIfNeeded(rawImp, !standardizeIsDone);
 				
                 Image3D rawImage = new Image3D(rawImp);
                 publish("Phase 1: Denoising (Fast NLM)...");
@@ -246,6 +248,9 @@ public class AneurysmCADeApp implements ToolbarPlugIn{
                     
                     // ★ 追加: 構築したVesselTreeをUIに渡し、カラーマップ中心線を生成！
                     ui.loadSkeletonColorMap(vesselTree);
+                    ui.buildInitialMesh();
+
+                    	// メッシュ生成の指示を出した後に、画面を表示する
                     ui.setVisible(true);
                     
                 } catch (Exception e) {

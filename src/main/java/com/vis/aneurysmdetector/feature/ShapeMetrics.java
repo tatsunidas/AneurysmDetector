@@ -1,3 +1,6 @@
+/*
+ * copyright visionary imaging services, inc.
+ */
 package com.vis.aneurysmdetector.feature;
 
 import com.vis.aneurysmdetector.core.Image3D;
@@ -15,14 +18,12 @@ import java.util.Set;
  */
 public class ShapeMetrics {
 
-    private Image3D image;
     private double voxelVolume;
     private double voxelFaceAreaX;
     private double voxelFaceAreaY;
     private double voxelFaceAreaZ;
 
     public ShapeMetrics(Image3D image) {
-        this.image = image;
         double sx = image.getSpacingX();
         double sy = image.getSpacingY();
         double sz = image.getSpacingZ();

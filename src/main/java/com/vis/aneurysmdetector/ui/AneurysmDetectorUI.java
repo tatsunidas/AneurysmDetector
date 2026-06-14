@@ -52,6 +52,13 @@ public class AneurysmDetectorUI extends JFrame {
 
 	private List<AneurysmCandidate> candidateList;
 	private List<CandidateItemPanel> itemPanelList;
+	
+	JSplitPane splitPane;
+	private JTabbedPane rightTabbedPane;
+	private JPanel branchListContainer;
+	private JSpinner spnCprWidth;
+	private JSpinner spnCprAngle;
+	private double maxBranchLength = 0.0;
 
 	private ImagePlus rawImp;
 	private ImagePlus nlmResultImp;
@@ -60,6 +67,8 @@ public class AneurysmDetectorUI extends JFrame {
 	private Image3D distanceMap;
 	private VesselTree vesselTree;
 	
+	private VolumeData segVolume;
+		
 	private ij.process.LUT currentLut;//buldge colorbar
 	
 	AneurysmCandidate highlightedCandidate;
@@ -190,7 +199,7 @@ public class AneurysmDetectorUI extends JFrame {
         setJMenuBar(menuBar); // JFrameにメニューバーを登録
         // ====================================================================
 
-		JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
+		splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
 		splitPane.setDividerLocation(750);
 		splitPane.setResizeWeight(0.7);
 
@@ -300,90 +309,8 @@ public class AneurysmDetectorUI extends JFrame {
 		// ====================================================================
 		// 2. 右側: サイドバー (判定パネル & チェックリスト)
 		// ====================================================================
-		JPanel sidebarPanel = new JPanel(new BorderLayout());
-		sidebarPanel.setBorder(BorderFactory.createMatteBorder(0, 1, 0, 0, Color.DARK_GRAY));
+		buildRightSidebar();
 
-		buildJudgePanel();
-		sidebarPanel.add(judgePanel, BorderLayout.NORTH);
-
-		listContainer = new JPanel();
-		listContainer.setLayout(new BoxLayout(listContainer, BoxLayout.Y_AXIS));
-
-		JScrollPane scrollPane = new JScrollPane(listContainer);
-		scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
-		scrollPane.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
-		sidebarPanel.add(scrollPane, BorderLayout.CENTER);
-
-		// ====================================================================
-		// 3. サイドバー下部: フィルターラジオボタン & 全クリア
-		// ====================================================================
-		JPanel southPanel = new JPanel(new GridBagLayout());
-		southPanel.setBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Color.LIGHT_GRAY));
-		southPanel.setBackground(Color.WHITE); // 背景を白にしてスッキリさせる
-
-		// ラジオボタンの生成
-		rbSuspectedOnly = new JRadioButton("SUSPECTED only");
-		rbNormalOnly = new JRadioButton("NORMAL only");
-		rbAll = new JRadioButton("All", true); // デフォルトは All を選択
-
-		Font filterFont = new Font("Meiryo", Font.PLAIN, 11);
-		rbSuspectedOnly.setFont(filterFont);
-		rbNormalOnly.setFont(filterFont);
-		rbAll.setFont(filterFont);
-
-		rbSuspectedOnly.setBackground(Color.WHITE);
-		rbNormalOnly.setBackground(Color.WHITE);
-		rbAll.setBackground(Color.WHITE);
-
-		// ボタンのグループ化（一つしか選べないようにする）
-		ButtonGroup filterGroup = new ButtonGroup();
-		filterGroup.add(rbSuspectedOnly);
-		filterGroup.add(rbNormalOnly);
-		filterGroup.add(rbAll);
-
-		// ラジオボタンがクリックされたらリストを再構築するリスナー
-		java.awt.event.ActionListener filterListener = e -> populateCandidates();
-		rbSuspectedOnly.addActionListener(filterListener);
-		rbNormalOnly.addActionListener(filterListener);
-		rbAll.addActionListener(filterListener);
-
-		// GridBagLayoutの設定
-		GridBagConstraints sGbc = new GridBagConstraints();
-		sGbc.fill = GridBagConstraints.HORIZONTAL;
-		sGbc.weighty = 0.0;
-
-		// 1段目: ラジオボタンを等幅で横並びにする
-		sGbc.insets = new Insets(6, 8, 2, 2);
-		sGbc.gridy = 0;
-
-		sGbc.gridx = 0;
-		sGbc.weightx = 0.35;
-		southPanel.add(rbSuspectedOnly, sGbc);
-
-		sGbc.gridx = 1;
-		sGbc.weightx = 0.33;
-		southPanel.add(rbNormalOnly, sGbc);
-
-		sGbc.gridx = 2;
-		sGbc.weightx = 0.32;
-		southPanel.add(rbAll, sGbc);
-
-		// 2段目: Clear All Candidates チェックボックス
-		btnAllNormal = new JCheckBox("Set All to NORMAL");
-		btnAllNormal.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
-		btnAllNormal.setBackground(Color.WHITE);
-		btnAllNormal.addActionListener(e -> handleAllNormal());
-
-		sGbc.gridx = 0;
-		sGbc.gridy = 1;
-		sGbc.gridwidth = 3; // 3列分ぶち抜き
-		sGbc.weightx = 1.0;
-		sGbc.insets = new Insets(6, 8, 8, 8); // 余白の調整
-		southPanel.add(btnAllNormal, sGbc);
-
-		sidebarPanel.add(southPanel, BorderLayout.SOUTH);
-
-		splitPane.setRightComponent(sidebarPanel);
 		add(splitPane, BorderLayout.CENTER);
 		
 		this.currentLut = com.vis.configuration.Resources.LUT_PHASE.loadLUT();
@@ -423,6 +350,52 @@ public class AneurysmDetectorUI extends JFrame {
         // デフォルトのパラメータでメッシュ生成とカラーリングを裏で1回だけ走らせる
         executeFastRecalculation(3.0, 1.35, 0.65, 0.0);
     }
+	
+	// コンストラクタ内の右側サイドバー構築部分を書き換え
+	private void buildRightSidebar() {
+	    rightTabbedPane = new JTabbedPane();
+
+	    // --- Tab 1: Candidates (既存のリスト) ---
+	    JPanel candidatesTab = new JPanel(new BorderLayout());
+	    buildJudgePanel();
+	    candidatesTab.add(judgePanel, BorderLayout.NORTH);
+	    
+	    listContainer = new JPanel();
+	    listContainer.setLayout(new BoxLayout(listContainer, BoxLayout.Y_AXIS));
+	    JScrollPane candScroll = new JScrollPane(listContainer);
+	    candidatesTab.add(candScroll, BorderLayout.CENTER);
+	    
+	    // (既存のフィルター系 southPanel の追加処理もここに入れる)
+	    rightTabbedPane.addTab("Candidates", candidatesTab);
+
+	    // --- Tab 2: Branches & CPR ---
+	    JPanel branchesTab = new JPanel(new BorderLayout());
+	    
+	    // CPRコントロールパネル (太さと角度の指定)
+	    JPanel cprControlPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
+	    cprControlPanel.setBorder(BorderFactory.createTitledBorder("CPR Settings"));
+	    
+	    spnCprWidth = new JSpinner(new SpinnerNumberModel(20.0, 5.0, 100.0, 1.0));
+	    spnCprAngle = new JSpinner(new SpinnerNumberModel(0.0, 0.0, 360.0, 5.0));
+	    
+	    cprControlPanel.add(new JLabel("Width(mm):"));
+	    cprControlPanel.add(spnCprWidth);
+	    cprControlPanel.add(new JLabel("Angle(deg):"));
+	    cprControlPanel.add(spnCprAngle);
+	    
+	    branchesTab.add(cprControlPanel, BorderLayout.NORTH);
+
+	    // ブランチリスト
+	    branchListContainer = new JPanel();
+	    branchListContainer.setLayout(new BoxLayout(branchListContainer, BoxLayout.Y_AXIS));
+	    JScrollPane branchScroll = new JScrollPane(branchListContainer);
+	    branchesTab.add(branchScroll, BorderLayout.CENTER);
+
+	    rightTabbedPane.addTab("Vessel Branches", branchesTab);
+
+	    // JSplitPane の右側にタブをセット
+	    splitPane.setRightComponent(rightTabbedPane);
+	}
 
 	private void populateCandidates() {
 		listContainer.removeAll();
@@ -455,6 +428,93 @@ public class AneurysmDetectorUI extends JFrame {
 		listContainer.repaint();
 	}
 
+	public void populateBranchList() {
+	    if (vesselTree == null || vesselTree.getBranches().isEmpty()) return;
+	    
+	    branchListContainer.removeAll();
+	    maxBranchLength = 0.0;
+
+	    // 1. 全ブランチの中から最長の長さを探す
+	    for (com.vis.aneurysmdetector.core.Branch b : vesselTree.getBranches()) {
+	        if (b.getLength() > maxBranchLength) {
+	            maxBranchLength = b.getLength();
+	        }
+	    }
+
+	    // 2. リストアイテムの生成
+	    for (int i = 0; i < vesselTree.getBranches().size(); i++) {
+	        com.vis.aneurysmdetector.core.Branch branch = vesselTree.getBranches().get(i);
+	        
+	        JPanel itemPanel = new JPanel(new BorderLayout(5, 5));
+	        itemPanel.setBorder(BorderFactory.createCompoundBorder(
+	            BorderFactory.createMatteBorder(0, 0, 1, 0, Color.LIGHT_GRAY),
+	            new EmptyBorder(5, 5, 5, 5)
+	        ));
+
+	        // ラベル情報 (IDと絶対長)
+	        JLabel lblInfo = new JLabel(String.format("Branch #%d (%.1f mm)", i, branch.getLength()));
+	        
+	        // 相対長を示すプログレスバー
+	        JProgressBar lengthBar = new JProgressBar(0, 100);
+	        int percent = (int) Math.round((branch.getLength() / maxBranchLength) * 100);
+	        lengthBar.setValue(percent);
+	        lengthBar.setStringPainted(true);
+	        lengthBar.setString(percent + "%");
+	        
+	        // CPR表示ボタン
+	        JButton btnShowCPR = new JButton("Show CPR");
+	        btnShowCPR.addActionListener(e -> showCPRForBranch(branch));
+
+	        itemPanel.add(lblInfo, BorderLayout.NORTH);
+	        itemPanel.add(lengthBar, BorderLayout.CENTER);
+	        itemPanel.add(btnShowCPR, BorderLayout.EAST);
+	        
+	        branchListContainer.add(itemPanel);
+	    }
+	    branchListContainer.revalidate();
+	    branchListContainer.repaint();
+	}
+	
+	private void showCPRForBranch(com.vis.aneurysmdetector.core.Branch branch) {
+	    if (segVolume == null) return; // VolumeDataがロードされている前提
+
+	    double cprWidthMm = (Double) spnCprWidth.getValue();
+	    double cprAngle = (Double) spnCprAngle.getValue();
+	    double pixelSpacingMm = 0.5; // サンプリング解像度
+
+	    // 1. パスの補間とフレーム計算
+	    List<com.vis.aneurysmdetector.cpr.VesselPathInterpolator.PathPoint> smoothPath = 
+	        com.vis.aneurysmdetector.cpr.VesselPathInterpolator.createSmoothPath(branch, distanceMap/*Image3D*/, pixelSpacingMm);
+
+	    // 2. CPR画像の生成 (ここでは通常の長さを切り出す)
+	    Image3D i3d = new Image3D(rawImp);
+	    ImagePlus cprImage = com.vis.aneurysmdetector.cpr.CurvedPlanarReconstructor.extractStraightenedCPR(
+	            i3d, smoothPath, cprWidthMm, pixelSpacingMm, cprAngle);
+
+	    // 3. 【最長100%スケールへのパディング】
+	    // キャンバスの最大高さを計算
+	    int maxPixelHeight = (int) Math.ceil(maxBranchLength / pixelSpacingMm);
+	    
+	    // ImageJの機能を使ってキャンバスサイズを拡張（下方向に黒で埋める）
+	    ij.plugin.CanvasResizer resizer = new ij.plugin.CanvasResizer();
+	    ij.process.ImageProcessor paddedProcessor = resizer.expandImage(
+	            cprImage.getProcessor(), 
+	            cprImage.getWidth(), 
+	            maxPixelHeight, 
+	            0, 0 // X, Y のオフセット (0,0 なら左上に配置され、余白は右下に追加される)
+	    );
+	    
+	    ImagePlus finalCprImp = new ImagePlus("CPR - Branch (Length: " + branch.getLength() + "mm)", paddedProcessor);
+	    finalCprImp.getCalibration().pixelWidth = pixelSpacingMm;
+	    finalCprImp.getCalibration().pixelHeight = pixelSpacingMm;
+	    finalCprImp.getCalibration().setUnit("mm");
+	    
+	    // コントラストを合わせる
+	    finalCprImp.setDisplayRange(rawImp.getDisplayRangeMin(), rawImp.getDisplayRangeMax());
+
+	    // 4. SeriesWindow で表示
+	    new com.vis.core.view.D2.ui.SeriesWindow(finalCprImp, null, com.vis.core.view.D2.ui.glasses.Praparat.ViewMode.Normal);
+	}
 	
 	/**
      * すべての検出候補のタイプを一度に NORMAL（正常血管）に一括仕分けします。
@@ -710,7 +770,6 @@ public class AneurysmDetectorUI extends JFrame {
 
         SwingWorker<Void, String> worker = new SwingWorker<Void, String>() {
             private List<AneurysmCandidate> newCandidates;
-            private VolumeData segVolume;
             private float[] calculatedBulgeMap; 
             
             // ★ 追加: ワーカー内で生成し、カラーリングまで完了したメッシュ
@@ -828,6 +887,7 @@ public class AneurysmDetectorUI extends JFrame {
                     
                     populateCandidates();
                     updateJudgeStatus();
+                    populateBranchList();
                     loadSkeletonColorMap(vesselTree);
                     
                     JOptionPane.showMessageDialog(AneurysmDetectorUI.this, 
